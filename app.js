@@ -17,7 +17,24 @@ const DEFAULTS = {
   wearPerKm: 0.08,    // RM per km (tyres, brakes, depreciation share)
   gentariPay: 5,
   gentariCredit: 30,
+  nearbyRadiusKm: 5,
+  operatorPrices: null, // filled from OPERATORS below
 };
+
+// Operators found by Google nearby search: [name, name matcher, default RM/kWh, Gentari credit applies]
+const OPERATORS = [
+  ['Gentari', /gentari/i, { DC: 1.40, AC: 0.95 }, true],
+  ['Tesla Supercharger', /tesla|supercharger/i, { DC: 0.93, AC: 0.93 }, false],
+  ['chargEV', /chargev|charge ev|yinson/i, { DC: 1.50, AC: 0.80 }, false],
+  ['JomCharge', /jomcharge|jom charge/i, { DC: 1.50, AC: 0.75 }, false],
+  ['ChargeSini', /chargesini|charge sini/i, { DC: 1.50, AC: 0.80 }, false],
+  ['DC Handal', /handal/i, { DC: 1.00, AC: 0.80 }, false],
+  ['TNB Electron', /tnb|electron/i, { DC: 1.50, AC: 0.90 }, false],
+  ['Shell Recharge', /shell/i, { DC: 1.20, AC: 0.90 }, false],
+  ['Charge N Go', /charge ?n ?go/i, { DC: 1.50, AC: 0.80 }, false],
+  ['Other', /.*/, { DC: 1.50, AC: 0.90 }, false],
+];
+DEFAULTS.operatorPrices = Object.fromEntries(OPERATORS.map(o => [o[0], { ...o[2] }]));
 
 // Approximate DC charging curve for 2024 Model 3 LR AWD: [SoC %, max kW]
 const DC_CURVE = [
@@ -29,7 +46,7 @@ const MANUAL_AVG_KMH = 45; // used when km given but minutes blank
 
 // ---------- state ----------
 let settings = load(LS.settings, {});
-settings = { ...DEFAULTS, ...settings };
+settings = { ...DEFAULTS, ...settings, operatorPrices: { ...DEFAULTS.operatorPrices, ...(settings.operatorPrices || {}) } };
 let favs = load(LS.favs, []);
 let state = load(LS.state, {
   socNow: 30, socTarget: 80,
@@ -389,7 +406,7 @@ function bindFavs() {
 // ---------- UI: settings ----------
 const SETTING_FIELDS = { apiKey: 'setApiKey', usableKwh: 'setUsableKwh', whPerKm: 'setWhPerKm', acLoss: 'setAcLoss', dcLoss: 'setDcLoss', onboardAc: 'setOnboardAc',
   wearPerKm: 'setWearPerKm', gentariPay: 'setGentariPay', gentariCredit: 'setGentariCredit' };
-function fillSettings() { for (const [k, id] of Object.entries(SETTING_FIELDS)) $('#' + id).value = settings[k]; }
+function fillSettings() { for (const [k, id] of Object.entries(SETTING_FIELDS)) $('#' + id).value = settings[k]; renderOpTable(); }
 function bindSettings() {
   const dlg = $('#settingsDlg');
   const open = () => { fillSettings(); dlg.showModal(); };
@@ -406,7 +423,7 @@ function bindSettings() {
       showToast(k.length === 39 && k.startsWith('AIza') ? 'Key pasted. Tap Test, then Save.' : `Pasted ${k.length} characters. Check it and tap Test.`);
     } catch (e) { showToast('Could not read clipboard. Long-press the field and paste instead.'); }
   });
-  $('#settingsReset').addEventListener('click', () => { const key = settings.apiKey; settings = { ...DEFAULTS, apiKey: key }; fillSettings(); });
+  $('#settingsReset').addEventListener('click', () => { const key = settings.apiKey; settings = { ...DEFAULTS, apiKey: key, operatorPrices: { ...DEFAULTS.operatorPrices } }; fillSettings(); });
   $('#settingsForm').addEventListener('submit', () => {
     const oldKey = settings.apiKey;
     for (const [k, id] of Object.entries(SETTING_FIELDS)) {
@@ -414,6 +431,7 @@ function bindSettings() {
       settings[k] = k === 'apiKey' ? cleanKey(v) : (v === '' ? DEFAULTS[k] : Number(v));
     }
     if (settings.gentariCredit <= 0) settings.gentariCredit = DEFAULTS.gentariCredit;
+    settings.operatorPrices = readOpTable();
     save(LS.settings, settings);
     renderBatteryHint(); renderKeyBanner();
     if (settings.apiKey !== oldKey) { routeCache.clear(); if (settings.apiKey && !mapsReady) location.reload(); }
@@ -587,6 +605,122 @@ function scrollToResults() {
   window.scrollTo({ top, behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
 }
 
+
+// ---------- nearby ----------
+function haversineKm(a, b) {
+  const R = 6371, toR = (d) => d * Math.PI / 180;
+  const dLat = toR(b.lat - a.lat), dLng = toR(b.lng - a.lng);
+  const x = Math.sin(dLat / 2) ** 2 + Math.cos(toR(a.lat)) * Math.cos(toR(b.lat)) * Math.sin(dLng / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(x));
+}
+function operatorFor(name) { return OPERATORS.find(o => o[1].test(name || '')) || OPERATORS[OPERATORS.length - 1]; }
+
+/** Google Places (New) nearby EV chargers -> candidate objects shaped like slots. */
+async function googleNearby(origin, radiusKm) {
+  const res = await fetch('https://places.googleapis.com/v1/places:searchNearby', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-Goog-Api-Key': settings.apiKey,
+               'X-Goog-FieldMask': 'places.id,places.displayName,places.formattedAddress,places.location,places.businessStatus,places.evChargeOptions' },
+    body: JSON.stringify({ includedTypes: ['electric_vehicle_charging_station'], maxResultCount: 20, rankPreference: 'DISTANCE',
+      locationRestriction: { circle: { center: { latitude: origin.lat, longitude: origin.lng }, radius: Math.min(50000, radiusKm * 1000) } } }),
+  });
+  if (!res.ok) { let m = 'Places nearby search failed (' + res.status + ')'; try { m += ': ' + (await res.json()).error?.message; } catch {} throw new Error(m); }
+  const j = await res.json();
+  return (j.places || []).filter(p => !p.businessStatus || p.businessStatus === 'OPERATIONAL').map(p => {
+    const name = p.displayName?.text || 'EV charger';
+    const op = operatorFor(name);
+    const agg = p.evChargeOptions?.connectorAggregation || [];
+    const dcTypes = /CCS|CHADEMO|TESLA/i;
+    const dc = agg.filter(a => dcTypes.test(a.type || '') && (a.maxChargeRateKw || 0) >= 20);
+    const ac = agg.filter(a => !dc.includes(a));
+    let type, kw, assumedPower = false;
+    if (dc.length) { type = 'DC'; kw = Math.max(...dc.map(a => a.maxChargeRateKw || 50)); }
+    else if (ac.length) { type = 'AC'; kw = Math.max(...ac.map(a => a.maxChargeRateKw || 7)); }
+    else { type = 'DC'; kw = 50; assumedPower = true; }
+    const price = (settings.operatorPrices[op[0]] || DEFAULTS.operatorPrices.Other)[type];
+    return { name, address: p.formattedAddress || '', lat: p.location.latitude, lng: p.location.longitude,
+      rate: price, type, kw: Math.round(kw), gentari: op[3], parking: '', parkingUnit: 'flat', manualKm: '', manualMin: '',
+      source: 'google', operator: op[0], assumedPower, placeId: p.id };
+  });
+}
+
+async function findNearby() {
+  const out = $('#nearOut'); const btn = $('#btnNear');
+  if (!state.origin) { out.innerHTML = '<div class="verdict warn"><div class="headline">Set a starting point first</div><div class="sub">Tap “Use my location” above.</div></div>'; return; }
+  btn.disabled = true; btn.textContent = 'Searching…';
+  try {
+    const radius = Number(settings.nearbyRadiusKm) || 5;
+    let cands = favs.filter(f => f.lat != null && f.lng != null && Number(f.rate) > 0).map(f => ({ ...f, favId: f.id, source: 'saved', manualKm: '', manualMin: '' }));
+    const notes = [];
+    if (settings.apiKey) {
+      try {
+        const g = await googleNearby(state.origin, radius);
+        for (const c of g) if (!cands.some(f => haversineKm(f, c) < 0.15)) cands.push(c);
+      } catch (e) { notes.push(e.message); }
+    } else notes.push('No Google key: showing saved chargers only, with straight-line distance estimates.');
+    cands = cands.map(c => ({ ...c, airKm: haversineKm(state.origin, c) })).filter(c => c.source === 'saved' ? c.airKm <= radius * 1.5 : true)
+      .sort((a, b) => a.airKm - b.airKm).slice(0, 15);
+    if (!cands.length) { out.innerHTML = `<div class="hint" style="margin-top:10px">Nothing within ${radius} km. Widen the radius or save a charger with a pinned location.</div>`; return; }
+    let routed = cands.map(() => null);
+    if (settings.apiKey) { try { routed = await routeMatrix(state.origin, cands); } catch (e) { notes.push(e.message); } }
+    const plan = sessionPlan(cands);
+    const rows = cands.map((c, i) => {
+      const km = routed[i] ? routed[i].km : c.airKm * 1.3;
+      const min = routed[i] ? routed[i].min : km / 40 * 60;
+      return { cand: c, ev: evaluate(c, km, min, plan), routed: !!routed[i] };
+    }).filter(r => r.ev.socArrive >= 0).sort((a, b) => a.ev.total - b.ev.total);
+    renderNearby(rows, plan, notes, radius);
+  } catch (e) { out.innerHTML = `<div class="verdict bad"><div class="headline">Search failed</div><div class="sub">${esc(e.message)}</div></div>`; }
+  finally { btn.disabled = false; btn.textContent = 'Find the cheapest charger nearby'; }
+}
+
+function renderNearby(rows, plan, notes, radius) {
+  const out = $('#nearOut');
+  if (!rows.length) { out.innerHTML = '<div class="hint" style="margin-top:10px">No reachable charger found.</div>'; return; }
+  const fastest = rows.reduce((a, b) => a.ev.totalMin <= b.ev.totalMin ? a : b);
+  out.innerHTML = `
+    ${plan.mode === 'credit' ? `<div class="hint" style="margin-top:10px">Gentari is nearby, so everything is compared on one RM ${num(settings.gentariCredit, 0)} credit: ${num(plan.packKwh, 1)} kWh into the pack.</div>` : `<div class="hint" style="margin-top:10px">Charging to ${state.socTarget}% at each.</div>`}
+    <div class="near-list">${rows.map((r, i) => {
+      const c = r.cand, e = r.ev;
+      const flags = [];
+      if (c.source === 'google') flags.push(`price assumed for ${c.operator}${c.assumedPower ? ', power unknown (50 kW DC assumed)' : ''}, parking not included`);
+      if (!r.routed) flags.push('distance estimated');
+      if (e.socArrive < 8) flags.push(`arrive at ${Math.round(e.socArrive)}%`);
+      return `<div class="near ${i === 0 ? 'best' : ''}" data-i="${i}">
+        <div class="n"><span>${esc(c.name)}</span>${c.gentari ? '<span class="tag">Gentari</span>' : ''}<span class="tag type">${esc(c.type)} ${esc(c.kw)} kW</span>${c.source === 'saved' ? '<span class="tag src">saved</span>' : ''}</div>
+        <div class="d">${num(e.km, 1)} km · ${Math.round(e.driveMin)} min drive · ${Math.round(e.chargeMin)} min charge · to ${Math.round(e.socEnd)}%</div>
+        <div class="p"><div class="rm">${rm(e.total)}</div><div class="t">${Math.round(e.totalMin)} min${r === fastest ? ' · quickest' : ''}</div></div>
+        ${flags.length ? `<div class="flag">${esc(flags.join(' · '))}</div>` : ''}
+      </div>`;
+    }).join('')}</div>
+    <div class="near-actions"><button class="btn primary" id="nearCompare">Compare top ${Math.min(2, rows.length)} in detail</button></div>
+    ${notes.length ? `<div class="hint">${notes.map(esc).join(' ')}</div>` : ''}
+    <div class="hint">Within ${radius} km of ${esc(state.origin.label)}. All-in = charging + parking + wear.</div>`;
+  $('#nearCompare')?.addEventListener('click', () => {
+    const picks = rows.slice(0, 2).map(r => {
+      const c = r.cand; const slot = emptySlot();
+      Object.assign(slot, { favId: c.favId || '', name: c.name, address: c.address, lat: c.lat, lng: c.lng, rate: c.rate, type: c.type, kw: c.kw, gentari: !!c.gentari, parking: c.parking ?? '', parkingUnit: c.parkingUnit || 'flat' });
+      if (!r.routed) { slot.manualKm = num(r.ev.km, 1); slot.manualMin = String(Math.round(r.ev.driveMin)); }
+      return slot;
+    });
+    while (picks.length < 2) picks.push(emptySlot());
+    state.slots = picks; persist(); renderSlots(); compare();
+  });
+}
+
+function renderOpTable() {
+  const host = $('#opTable');
+  host.innerHTML = '<div class="h">Operator</div><div class="h">DC RM/kWh</div><div class="h">AC RM/kWh</div>' + OPERATORS.map(([name]) => {
+    const p = settings.operatorPrices[name] || DEFAULTS.operatorPrices[name];
+    return `<div class="n">${esc(name)}</div><input type="number" step="0.01" min="0" inputmode="decimal" data-op="${esc(name)}" data-t="DC" value="${Number(p.DC).toFixed(2)}"><input type="number" step="0.01" min="0" inputmode="decimal" data-op="${esc(name)}" data-t="AC" value="${Number(p.AC).toFixed(2)}">`;
+  }).join('');
+}
+function readOpTable() {
+  const prices = {};
+  $$('#opTable input').forEach(i => { prices[i.dataset.op] = prices[i.dataset.op] || {}; prices[i.dataset.op][i.dataset.t] = Number(i.value) || DEFAULTS.operatorPrices[i.dataset.op][i.dataset.t]; });
+  return prices;
+}
+
 // ---------- misc ----------
 let toastTimer;
 function showToast(msg) {
@@ -605,6 +739,9 @@ function init() {
   renderSlots();
   $('#btnAddSlot').addEventListener('click', () => { if (state.slots.length < 4) { state.slots.push(emptySlot()); persist(); renderSlots(); } });
   $('#btnCompare').addEventListener('click', compare);
+  $('#nearRadius').value = String(settings.nearbyRadiusKm || 5);
+  $('#nearRadius').addEventListener('change', e => { settings.nearbyRadiusKm = Number(e.target.value); save(LS.settings, settings); });
+  $('#btnNear').addEventListener('click', findNearby);
   if ('serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register('sw.js').catch(() => {});
 }
 document.addEventListener('DOMContentLoaded', init);

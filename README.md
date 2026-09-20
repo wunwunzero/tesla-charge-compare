@@ -14,6 +14,8 @@ Live: https://wunwunzero.github.io/tesla-charge-compare/
   - **Parking**: per station, either a flat fee per visit or an hourly rate applied to the charging session (rounded up to whole hours).
   - **Tyres and wear**: a flat RM/km.
   - **Time is shown, not priced**: driving minutes plus an estimated charging session, using a Model 3 LR DC charging curve capped by the charger's kW (AC capped at the 11 kW onboard charger). The verdict says how many minutes longer the cheaper option takes, and what that works out to in ringgit saved per extra hour.
+- **Gentari credit sessions**: if a Gentari charger is in the comparison, the session is one RM5 top-up worth RM30 of charging (about 23 kWh at RM1.30) and stops there. Every other charger is compared on adding the same energy, so the totals stay apples to apples.
+- **Cheapest near me**: ranks your saved chargers plus EV chargers Google finds within a chosen radius, routed from your position, by all-in cost and total time. Google results are priced from an editable operator table (Gentari, Tesla, chargEV, JomCharge, ChargeSini, DC Handal, TNB Electron, Shell Recharge, Charge N Go) and flagged as estimates; power and DC/AC come from Google's connector data where available.
 - Remembers your regular chargers on the device so you pick them from a list.
 - Falls back to manual km/minutes when there is no API key or no signal. Installable to the home screen and usable offline in manual mode.
 
@@ -36,7 +38,8 @@ Every option is compared at the same end state (same target %), so the numbers a
 | AC / DC losses | 10% / 5% | you pay for billed kWh, not pack kWh |
 | Onboard AC limit | 11 kW | |
 | Wear | RM 0.08/km | tyres, brakes, depreciation share |
-| Gentari deal | RM 5 → RM 30 | applied to every ringgit at flagged stations |
+| Gentari deal | RM 5 → RM 30 | one top-up per session, then stop |
+| Nearby radius | 5 km | 3 to 20 km |
 
 ## Files
 
