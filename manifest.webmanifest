@@ -1,0 +1,15 @@
+{
+  "name": "Charge Compare",
+  "short_name": "Charge",
+  "description": "Which charger is cheaper to drive to? Tesla Model 3 LR AWD 2024, with Gentari credit deals.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#0b1220",
+  "theme_color": "#0f172a",
+  "icons": [
+    { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml" },
+    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png" }
+  ]
+}

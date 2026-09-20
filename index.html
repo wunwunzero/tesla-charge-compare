@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Charge Compare</title>
+<meta name="description" content="Decide which EV charger is cheaper to drive to, for a Tesla Model 3 Long Range AWD (2024), including Gentari credit deals.">
+<meta name="theme-color" content="#0f172a">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Charge Compare">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icon-192.png">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<header class="topbar">
+  <div class="brand">
+    <img src="icon.svg" alt="" width="28" height="28">
+    <div>
+      <h1>Charge Compare</h1>
+      <div class="sub">Model 3 LR AWD 2024</div>
+    </div>
+  </div>
+  <button id="btnSettings" class="icon-btn" aria-label="Settings" title="Settings">&#9881;</button>
+</header>
+
+<main>
+  <div id="keyBanner" class="banner hidden">
+    <strong>No Google API key yet.</strong> Add one in Settings for address search and live driving distances. Until then, enter km and minutes for each charger manually.
+    <button id="bannerSettings" class="link-btn">Open Settings</button>
+  </div>
+
+  <!-- BATTERY -->
+  <section class="card">
+    <h2>Battery</h2>
+    <div class="row two">
+      <label>Now
+        <div class="pct"><input type="number" id="socNow" min="0" max="100" step="1" inputmode="numeric"><span>%</span></div>
+        <input type="range" id="socNowRange" min="0" max="100" step="1">
+      </label>
+      <label>Charge to
+        <div class="pct"><input type="number" id="socTarget" min="0" max="100" step="1" inputmode="numeric"><span>%</span></div>
+        <input type="range" id="socTargetRange" min="0" max="100" step="1">
+      </label>
+    </div>
+    <div class="hint" id="batteryHint"></div>
+  </section>
+
+  <!-- ORIGIN -->
+  <section class="card">
+    <h2>Starting from</h2>
+    <div class="row">
+      <button id="btnLocate" class="btn secondary">&#9737; Use my location</button>
+      <div id="originAuto" class="autocomplete-slot"></div>
+    </div>
+    <input type="text" id="originManual" class="hidden" placeholder="Type a place (needs API key for search)" disabled>
+    <div class="hint" id="originHint">No starting point set.</div>
+  </section>
+
+  <!-- STATIONS -->
+  <section class="card">
+    <div class="card-head">
+      <h2>Chargers to compare</h2>
+      <button id="btnAddSlot" class="btn small">+ Add</button>
+    </div>
+    <div id="slots"></div>
+  </section>
+
+  <button id="btnCompare" class="btn primary big">Compare</button>
+
+  <!-- RESULTS -->
+  <section id="results" class="hidden"></section>
+
+  <!-- FAVOURITES -->
+  <section class="card">
+    <details id="favDetails">
+      <summary><h2>Saved chargers <span id="favCount" class="pill"></span></h2></summary>
+      <div id="favList" class="fav-list"></div>
+      <form id="favForm" class="fav-form">
+        <h3 id="favFormTitle">Add a charger</h3>
+        <input type="hidden" id="favId">
+        <label>Name <input type="text" id="favName" required placeholder="e.g. Gentari Sunway Pyramid"></label>
+        <label>Location
+          <div id="favAuto" class="autocomplete-slot"></div>
+          <input type="text" id="favAddress" placeholder="Address or description" autocomplete="off">
+          <div class="row two tight">
+            <input type="number" id="favLat" step="any" placeholder="Latitude (optional)" inputmode="decimal">
+            <input type="number" id="favLng" step="any" placeholder="Longitude (optional)" inputmode="decimal">
+          </div>
+        </label>
+        <div class="row three">
+          <label>RM / kWh <input type="number" id="favRate" step="0.01" min="0" required inputmode="decimal" placeholder="1.20"></label>
+          <label>Type
+            <select id="favType"><option value="DC">DC fast</option><option value="AC">AC</option></select>
+          </label>
+          <label>Charger kW <input type="number" id="favKw" step="1" min="1" required inputmode="numeric" placeholder="60"></label>
+        </div>
+        <label class="check"><input type="checkbox" id="favGentari"> Gentari credit deal applies here</label>
+        <div class="row">
+          <button type="submit" class="btn primary">Save</button>
+          <button type="button" id="favCancel" class="btn secondary hidden">Cancel</button>
+        </div>
+      </form>
+    </details>
+  </section>
+
+  <p class="foot">Estimates only. Energy use, charging curve and losses are approximations for a 2024 Model 3 Long Range AWD. Prices exclude parking and idle fees.</p>
+</main>
+
+<!-- SETTINGS DIALOG -->
+<dialog id="settingsDlg">
+  <form method="dialog" id="settingsForm">
+    <div class="card-head">
+      <h2>Settings</h2>
+      <button type="button" id="settingsClose" class="icon-btn" aria-label="Close">&#10005;</button>
+    </div>
+
+    <h3>Google Maps</h3>
+    <label>API key
+      <input type="password" id="setApiKey" autocomplete="off" placeholder="AIza...">
+    </label>
+    <p class="hint">Create a key in Google Cloud with <b>Maps JavaScript API</b>, <b>Places API (New)</b> and <b>Routes API</b> enabled. Restrict it to your site's HTTP referrer. Stored only in this browser.</p>
+
+    <h3>Car</h3>
+    <div class="row two">
+      <label>Usable battery (kWh) <input type="number" id="setUsableKwh" step="0.5" min="40" max="100"></label>
+      <label>Consumption (Wh/km) <input type="number" id="setWhPerKm" step="1" min="100" max="300"></label>
+    </div>
+    <div class="row three">
+      <label>AC losses (%) <input type="number" id="setAcLoss" step="1" min="0" max="30"></label>
+      <label>DC losses (%) <input type="number" id="setDcLoss" step="1" min="0" max="30"></label>
+      <label>Onboard AC max (kW) <input type="number" id="setOnboardAc" step="0.1" min="3" max="22"></label>
+    </div>
+
+    <h3>What your time and car are worth</h3>
+    <div class="row two">
+      <label>Your time (RM / hour) <input type="number" id="setTimeValue" step="1" min="0"></label>
+      <label>Tyres and wear (RM / km) <input type="number" id="setWearPerKm" step="0.01" min="0"></label>
+    </div>
+
+    <h3>Gentari credit deal</h3>
+    <div class="row two">
+      <label>You pay (RM) <input type="number" id="setGentariPay" step="0.5" min="0"></label>
+      <label>You get credit (RM) <input type="number" id="setGentariCredit" step="0.5" min="0.5"></label>
+    </div>
+    <p class="hint">Applied to every ringgit charged at a Gentari-flagged station. RM5 for RM30 means you pay one sixth of the listed price.</p>
+
+    <div class="row">
+      <button type="submit" class="btn primary">Save settings</button>
+      <button type="button" id="settingsReset" class="btn secondary">Reset defaults</button>
+    </div>
+  </form>
+</dialog>
+
+<template id="slotTpl">
+  <div class="slot">
+    <div class="slot-head">
+      <select class="slot-pick"></select>
+      <button type="button" class="icon-btn slot-remove" aria-label="Remove">&#10005;</button>
+    </div>
+    <div class="slot-custom">
+      <input type="text" class="slot-name" placeholder="Charger name">
+      <div class="autocomplete-slot slot-auto"></div>
+      <input type="text" class="slot-address" placeholder="Address (optional without API key)">
+      <div class="row three">
+        <label>RM / kWh <input type="number" class="slot-rate" step="0.01" min="0" inputmode="decimal"></label>
+        <label>Type <select class="slot-type"><option value="DC">DC fast</option><option value="AC">AC</option></select></label>
+        <label>kW <input type="number" class="slot-kw" step="1" min="1" inputmode="numeric"></label>
+      </div>
+      <label class="check"><input type="checkbox" class="slot-gentari"> Gentari credit deal</label>
+    </div>
+    <div class="slot-summary"></div>
+    <details class="manual">
+      <summary>Manual distance</summary>
+      <div class="row two tight">
+        <label>Driving km <input type="number" class="slot-km" step="0.1" min="0" inputmode="decimal"></label>
+        <label>Driving min <input type="number" class="slot-min" step="1" min="0" inputmode="numeric"></label>
+      </div>
+      <div class="hint">Used when set, otherwise Google routing fills this in.</div>
+    </details>
+  </div>
+</template>
+
+<script src="app.js"></script>
+</body>
+</html>
