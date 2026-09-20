@@ -115,6 +115,12 @@
           </label>
           <label>Charger kW <input type="number" id="favKw" step="1" min="1" required inputmode="numeric" placeholder="60"></label>
         </div>
+        <div class="row two">
+          <label>Parking fee, RM <input type="number" id="favParking" step="0.5" min="0" inputmode="decimal" placeholder="0"></label>
+          <label>Charged
+            <span class="select"><select id="favParkingUnit"><option value="flat">Flat per visit</option><option value="hour">Per hour (or part)</option></select></span>
+          </label>
+        </div>
         <label class="check"><input type="checkbox" id="favGentari"><span>Gentari credit deal applies here</span></label>
         <div class="row">
           <button type="submit" class="btn primary">Save charger</button>
@@ -124,7 +130,7 @@
     </details>
   </section>
 
-  <p class="foot"><span id="ver">v7 · 20 Sep 2026</span><br>Estimates. Consumption, charging curve and losses are approximations for a 2024 Model 3 Long Range AWD. Parking and idle fees not included.</p>
+  <p class="foot"><span id="ver">v8 · 20 Sep 2026</span><br>Estimates. Consumption, charging curve and losses are approximations for a 2024 Model 3 Long Range AWD. Idle fees not included.</p>
 </main>
 
 <div class="actionbar">
@@ -161,11 +167,11 @@
       <label>Onboard AC, kW <input type="number" id="setOnboardAc" step="0.1" min="3" max="22"></label>
     </div>
 
-    <h3>Your time and your car</h3>
+    <h3>Your car</h3>
     <div class="row two">
-      <label>Your time, RM / hour <input type="number" id="setTimeValue" step="1" min="0"></label>
       <label>Wear, RM / km <input type="number" id="setWearPerKm" step="0.01" min="0"></label>
     </div>
+    <p class="hint">Time is not converted to money. The result shows how many extra minutes the slower option costs you.</p>
 
     <h3>Gentari credit deal</h3>
     <div class="row two">
@@ -195,6 +201,10 @@
         <label>RM / kWh <input type="number" class="slot-rate" step="0.01" min="0" inputmode="decimal" placeholder="1.20"></label>
         <label>Type <span class="select"><select class="slot-type"><option value="DC">DC</option><option value="AC">AC</option></select></span></label>
         <label>kW <input type="number" class="slot-kw" step="1" min="1" inputmode="numeric" placeholder="60"></label>
+      </div>
+      <div class="row two">
+        <label>Parking RM <input type="number" class="slot-parking" step="0.5" min="0" inputmode="decimal" placeholder="0"></label>
+        <label>Charged <span class="select"><select class="slot-parking-unit"><option value="flat">Flat per visit</option><option value="hour">Per hour</option></select></span></label>
       </div>
       <label class="check"><input type="checkbox" class="slot-gentari"><span>Gentari credit deal</span></label>
     </div>

@@ -11,8 +11,9 @@ Live: https://wunwunzero.github.io/tesla-charge-compare/
 - Gets real driving distance and time to each charger from Google's Routes API, with live traffic.
 - Works out the **all-in cost** of each option and tells you where to go:
   - **Charging**: kWh billed to reach the target, including the energy you burn driving there and AC/DC charging losses, at the station's RM/kWh. Gentari-flagged stations pay RM5 per RM30 of credit, so the effective rate is one sixth.
-  - **Your time**: driving minutes plus an estimated charging session, using a Model 3 LR DC charging curve capped by the charger's kW (AC capped at the 11 kW onboard charger), at your RM/hour.
+  - **Parking**: per station, either a flat fee per visit or an hourly rate applied to the charging session (rounded up to whole hours).
   - **Tyres and wear**: a flat RM/km.
+  - **Time is shown, not priced**: driving minutes plus an estimated charging session, using a Model 3 LR DC charging curve capped by the charger's kW (AC capped at the 11 kW onboard charger). The verdict says how many minutes longer the cheaper option takes, and what that works out to in ringgit saved per extra hour.
 - Remembers your regular chargers on the device so you pick them from a list.
 - Falls back to manual km/minutes when there is no API key or no signal. Installable to the home screen and usable offline in manual mode.
 
@@ -23,7 +24,7 @@ Every option is compared at the same end state (same target %), so the numbers a
 1. Open the site, tap the gear, and paste a Google Maps API key. Nothing is sent anywhere except Google; the key lives only in your browser's storage.
 2. In Google Cloud, the key needs these APIs enabled: **Maps JavaScript API**, **Places API (New)**, **Routes API**.
    Restrict the key to HTTP referrer `https://wunwunzero.github.io/*`.
-3. Add your regular chargers under "Saved chargers" (name, location, RM/kWh, AC/DC, kW, Gentari deal yes/no).
+3. Add your regular chargers under "Saved chargers" (name, location, RM/kWh, AC/DC, kW, parking fee, Gentari deal yes/no).
 4. On iPhone: Share → Add to Home Screen.
 
 ## Assumptions you can change in Settings
@@ -34,7 +35,6 @@ Every option is compared at the same end state (same target %), so the numbers a
 | Consumption | 155 Wh/km | mixed Malaysian driving |
 | AC / DC losses | 10% / 5% | you pay for billed kWh, not pack kWh |
 | Onboard AC limit | 11 kW | |
-| Your time | RM 20/h | |
 | Wear | RM 0.08/km | tyres, brakes, depreciation share |
 | Gentari deal | RM 5 → RM 30 | applied to every ringgit at flagged stations |
 

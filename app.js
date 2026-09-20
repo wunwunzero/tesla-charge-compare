@@ -14,7 +14,6 @@ const DEFAULTS = {
   acLoss: 10,         // % of billed kWh lost on AC
   dcLoss: 5,          // % of billed kWh lost on DC
   onboardAc: 11,      // kW, Tesla onboard charger limit
-  timeValue: 20,      // RM per hour
   wearPerKm: 0.08,    // RM per km (tyres, brakes, depreciation share)
   gentariPay: 5,
   gentariCredit: 30,
@@ -45,7 +44,7 @@ let lastError = '';
 const routeCache = new Map();     // key -> {km, min}
 
 function emptySlot() {
-  return { favId: '', name: '', address: '', lat: null, lng: null, rate: '', type: 'DC', kw: '', gentari: false, manualKm: '', manualMin: '' };
+  return { favId: '', name: '', address: '', lat: null, lng: null, rate: '', type: 'DC', kw: '', gentari: false, parking: '', parkingUnit: 'flat', manualKm: '', manualMin: '' };
 }
 function load(k, fallback) { try { const v = JSON.parse(localStorage.getItem(k)); return v ?? fallback; } catch { return fallback; } }
 function save(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} }
@@ -102,11 +101,13 @@ function evaluate(st, km, driveMin) {
   const detourKwhBilled = driveKwh / (1 - loss);
   const detourEnergyCost = detourKwhBilled * effRate;
   const chargeMin = chargeMinutes(Math.max(socArrive, 0), state.socTarget, st.type, Number(st.kw) || 1);
-  const timeCost = (driveMin + chargeMin) / 60 * settings.timeValue;
+  const parkingRate = Number(st.parking) || 0;
+  const parkingCost = st.parkingUnit === 'hour' ? Math.ceil(chargeMin / 60) * parkingRate : parkingRate;
   const wearCost = km * settings.wearPerKm;
-  const total = chargeCost + timeCost + wearCost;
+  const totalMin = driveMin + chargeMin;
+  const total = chargeCost + parkingCost + wearCost;
   return { km, driveMin, driveKwh, socArrive, packKwh, billedKwh, rate, effRate, gFactor, listedCost, chargeCost,
-           detourEnergyCost, chargeMin, timeCost, wearCost, total };
+           detourEnergyCost, chargeMin, parkingCost, parkingRate, wearCost, totalMin, total };
 }
 
 // ---------- Google Maps ----------
@@ -264,6 +265,8 @@ function renderSlots() {
     $('.slot-type', node).value = slot.type;
     $('.slot-kw', node).value = slot.kw;
     $('.slot-gentari', node).checked = !!slot.gentari;
+    $('.slot-parking', node).value = slot.parking ?? '';
+    $('.slot-parking-unit', node).value = slot.parkingUnit || 'flat';
     $('.slot-km', node).value = slot.manualKm;
     $('.slot-min', node).value = slot.manualMin;
     $('.slot-remove', node).classList.toggle('hidden', state.slots.length <= 2);
@@ -273,13 +276,13 @@ function renderSlots() {
       slot.favId = pick.value;
       if (slot.favId) {
         const f = favs.find(x => x.id === slot.favId);
-        Object.assign(slot, { name: f.name, address: f.address, lat: f.lat, lng: f.lng, rate: f.rate, type: f.type, kw: f.kw, gentari: !!f.gentari });
+        Object.assign(slot, { name: f.name, address: f.address, lat: f.lat, lng: f.lng, rate: f.rate, type: f.type, kw: f.kw, gentari: !!f.gentari, parking: f.parking ?? '', parkingUnit: f.parkingUnit || 'flat' });
       }
       persist(); renderSlots();
     });
     const bind = (sel, key, transform = v => v) => $(sel, node).addEventListener('input', e => { slot[key] = transform(e.target.type === 'checkbox' ? e.target.checked : e.target.value); persist(); renderSlotSummary(node, slot); });
     bind('.slot-name', 'name'); bind('.slot-address', 'address'); bind('.slot-rate', 'rate'); bind('.slot-type', 'type'); bind('.slot-kw', 'kw'); bind('.slot-gentari', 'gentari');
-    bind('.slot-km', 'manualKm'); bind('.slot-min', 'manualMin');
+    bind('.slot-km', 'manualKm'); bind('.slot-min', 'manualMin'); bind('.slot-parking', 'parking'); bind('.slot-parking-unit', 'parkingUnit');
     $('.slot-address', node).addEventListener('input', () => { slot.lat = null; slot.lng = null; });
     $('.slot-remove', node).addEventListener('click', () => { state.slots.splice(idx, 1); persist(); renderSlots(); });
     if (slot.manualKm !== '' && slot.manualKm != null) $('.manual', node).open = true;
@@ -300,7 +303,7 @@ function renderSlotSummary(node, slot) {
   const parts = [];
   if (slot.favId) {
     parts.push(esc(slot.address || ''));
-    parts.push(`<b>RM ${num(slot.rate, 2)}/kWh</b> · ${esc(slot.type)} ${esc(slot.kw)} kW${slot.gentari ? ' · <span class="tag">Gentari deal</span>' : ''}`);
+    parts.push(`<b>RM ${num(slot.rate, 2)}/kWh</b> · ${esc(slot.type)} ${esc(slot.kw)} kW${Number(slot.parking) ? ` · parking RM ${num(slot.parking, 2)}${slot.parkingUnit === 'hour' ? '/h' : ''}` : ''}${slot.gentari ? ' · <span class="tag">Gentari deal</span>' : ''}`);
   }
   if (slot.lat != null) parts.push(`<span>Location pinned</span>`); else if (slot.address && !slot.favId) parts.push(`<span class="hint">No coordinates. Pick from search or enter manual km.</span>`);
   s.innerHTML = parts.filter(Boolean).join('<br>');
@@ -315,7 +318,7 @@ function renderFavs() {
     const d = document.createElement('div');
     d.className = 'fav-item';
     d.innerHTML = `<div class="meta"><div class="name"><span>${esc(f.name)}</span>${f.gentari ? '<span class="tag">Gentari</span>' : ''}<span class="tag type">${esc(f.type)} ${esc(f.kw)} kW</span></div>
-      <div class="detail">RM ${num(f.rate, 2)}/kWh · ${esc(f.address || (f.lat != null ? `${num(f.lat, 4)}, ${num(f.lng, 4)}` : 'no location'))}</div></div>
+      <div class="detail">RM ${num(f.rate, 2)}/kWh${Number(f.parking) ? ` · parking RM ${num(f.parking, 2)}${f.parkingUnit === 'hour' ? '/h' : ''}` : ''} · ${esc(f.address || (f.lat != null ? `${num(f.lat, 4)}, ${num(f.lng, 4)}` : 'no location'))}</div></div>
       <button class="icon-btn" data-act="edit" aria-label="Edit">${ICON('edit')}</button><button class="icon-btn" data-act="del" aria-label="Delete">${ICON('trash')}</button>`;
     $('[data-act=edit]', d).addEventListener('click', () => editFav(f));
     $('[data-act=del]', d).addEventListener('click', () => { if (confirm(`Delete "${f.name}"?`)) { favs = favs.filter(x => x.id !== f.id); save(LS.favs, favs); renderFavs(); renderSlots(); } });
@@ -328,6 +331,7 @@ function editFav(f) {
   $('#favId').value = f.id; $('#favName').value = f.name; $('#favAddress').value = f.address || '';
   $('#favLat').value = f.lat ?? ''; $('#favLng').value = f.lng ?? '';
   $('#favRate').value = f.rate; $('#favType').value = f.type; $('#favKw').value = f.kw; $('#favGentari').checked = !!f.gentari;
+  $('#favParking').value = f.parking ?? ''; $('#favParkingUnit').value = f.parkingUnit || 'flat';
   $('#favCancel').classList.remove('hidden');
   $('#favForm').scrollIntoView({ behavior: 'smooth', block: 'center' });
 }
@@ -341,12 +345,13 @@ function bindFavs() {
     const lat = $('#favLat').value === '' ? null : Number($('#favLat').value);
     const lng = $('#favLng').value === '' ? null : Number($('#favLng').value);
     const f = { id, name: $('#favName').value.trim(), address: $('#favAddress').value.trim(), lat, lng,
-      rate: Number($('#favRate').value), type: $('#favType').value, kw: Number($('#favKw').value), gentari: $('#favGentari').checked };
+      rate: Number($('#favRate').value), type: $('#favType').value, kw: Number($('#favKw').value), gentari: $('#favGentari').checked,
+      parking: $('#favParking').value === '' ? '' : Number($('#favParking').value), parkingUnit: $('#favParkingUnit').value };
     const i = favs.findIndex(x => x.id === id);
     if (i >= 0) favs[i] = f; else favs.push(f);
     save(LS.favs, favs);
     // refresh any slot using this favourite
-    for (const s of state.slots) if (s.favId === id) Object.assign(s, { name: f.name, address: f.address, lat: f.lat, lng: f.lng, rate: f.rate, type: f.type, kw: f.kw, gentari: f.gentari });
+    for (const s of state.slots) if (s.favId === id) Object.assign(s, { name: f.name, address: f.address, lat: f.lat, lng: f.lng, rate: f.rate, type: f.type, kw: f.kw, gentari: f.gentari, parking: f.parking, parkingUnit: f.parkingUnit });
     persist(); resetFavForm(); renderFavs(); renderSlots();
     showToast('Saved ' + f.name);
   });
@@ -360,7 +365,7 @@ function bindFavs() {
 
 // ---------- UI: settings ----------
 const SETTING_FIELDS = { apiKey: 'setApiKey', usableKwh: 'setUsableKwh', whPerKm: 'setWhPerKm', acLoss: 'setAcLoss', dcLoss: 'setDcLoss', onboardAc: 'setOnboardAc',
-  timeValue: 'setTimeValue', wearPerKm: 'setWearPerKm', gentariPay: 'setGentariPay', gentariCredit: 'setGentariCredit' };
+  wearPerKm: 'setWearPerKm', gentariPay: 'setGentariPay', gentariCredit: 'setGentariCredit' };
 function fillSettings() { for (const [k, id] of Object.entries(SETTING_FIELDS)) $('#' + id).value = settings[k]; }
 function bindSettings() {
   const dlg = $('#settingsDlg');
@@ -481,30 +486,31 @@ function renderResults(rows) {
   let html = '';
 
   // ---- verdict ----
+  const fmtMin = (m) => Math.round(Math.abs(m)) + ' min';
   if (best) {
     const others = ok.filter(r => r !== best);
     const runner = others.length ? others.reduce((a, b) => a.ev.total <= b.ev.total ? a : b) : null;
     const diff = runner ? runner.ev.total - best.ev.total : 0;
-    const chargeDiff = runner ? runner.ev.chargeCost - best.ev.chargeCost : 0;
-    let why = '';
+    const dt = runner ? best.ev.totalMin - runner.ev.totalMin : 0; // + means best takes longer
+    const fastest = ok.reduce((a, b) => a.ev.totalMin <= b.ev.totalMin ? a : b);
+    let timeLine = '';
     if (runner) {
-      const other = diff - chargeDiff; // saving from driving + time + wear
-      if (Math.abs(diff) < 1) why = 'Practically a tie. Go with whichever is more convenient.';
-      else if (chargeDiff <= 0.01) why = `Charging alone is ${rm(-chargeDiff)} cheaper at ${esc(nameOf(runner))}, but the extra driving and time there outweigh it.`;
-      else if (other < -0.01) why = `Charging itself is ${rm(chargeDiff)} cheaper here. The longer drive and session give back ${rm(-other)} of that.`;
-      else why = `Cheaper on charging by ${rm(chargeDiff)} and on driving and time by ${rm(other)}.`;
+      if (Math.abs(dt) < 2) timeLine = `About the same time as ${esc(nameOf(runner))}.`;
+      else if (dt > 0) timeLine = `But it takes <b>${fmtMin(dt)} longer</b> than ${esc(nameOf(runner))} (${Math.round(best.ev.totalMin)} vs ${Math.round(runner.ev.totalMin)} min driving + charging). That is about RM ${(diff / (dt / 60)).toFixed(0)} saved per extra hour.`;
+      else timeLine = `And it is <b>${fmtMin(dt)} quicker</b> too (${Math.round(best.ev.totalMin)} vs ${Math.round(runner.ev.totalMin)} min driving + charging).`;
     }
     html += `<div class="verdict">
-      <div class="eyebrow">Recommendation</div>
-      <div class="headline">Go to ${esc(nameOf(best))}</div>
-      ${runner ? `<div class="saving"><span class="amt">${rm(diff)}</span><span class="vs">saved all-in vs ${esc(nameOf(runner))}</span></div>` : ''}
-      <div class="sub">${why} Arrive at about ${Math.round(best.ev.socArrive)}%, charge about ${Math.round(best.ev.chargeMin)} min to ${state.socTarget}%.</div>
+      <div class="eyebrow">Cheapest</div>
+      <div class="headline">${esc(nameOf(best))}</div>
+      ${runner ? `<div class="saving"><span class="amt">${rm(diff)}</span><span class="vs">cheaper than ${esc(nameOf(runner))}, charging + parking + wear</span></div>` : ''}
+      <div class="sub">${timeLine} Arrive at about ${Math.round(best.ev.socArrive)}%, charge about ${Math.round(best.ev.chargeMin)} min to ${state.socTarget}%.${fastest !== best && runner ? ` Quickest option: ${esc(nameOf(fastest))}.` : ''}</div>
     </div>`;
   } else {
-    html += `<div class="verdict bad"><div class="eyebrow">Recommendation</div><div class="headline">None reachable</div><div class="sub">You would not make it to any of these on the current charge.</div></div>`;
+    html += `<div class="verdict bad"><div class="eyebrow">Cheapest</div><div class="headline">None reachable</div><div class="sub">You would not make it to any of these on the current charge.</div></div>`;
   }
 
   // ---- side-by-side table ----
+  const fastestOk = ok.length ? ok.reduce((a, b) => a.ev.totalMin <= b.ev.totalMin ? a : b) : null;
   const cell = (r, fn, cls = '') => {
     if (!r.ev) return `<td class="dead">—</td>`;
     const dead = r.ev.socArrive < 0;
@@ -515,7 +521,7 @@ function renderResults(rows) {
     ['Arrive at', (e) => e.socArrive < 0 ? `Out of charge<span class="sub">short by ${Math.round(-e.socArrive)}%</span>` : `${Math.round(e.socArrive)}%${e.socArrive < 8 ? '<span class="sub">tight</span>' : ''}`],
     ['Charge', (e, r) => `${num(e.billedKwh, 1)} kWh<span class="sub">${Math.round(e.chargeMin)} min · ${esc(r.slot.type)} ${esc(r.slot.kw)} kW</span>`],
     ['Charging cost', (e, r) => `${rm(e.chargeCost)}<span class="sub">${r.slot.gentari ? `RM ${num(e.effRate, 3)}/kWh after credit` : `RM ${num(e.rate, 2)}/kWh`}</span>`],
-    ['Your time', (e) => `${rm(e.timeCost)}<span class="sub">${Math.round(e.driveMin + e.chargeMin)} min at RM ${settings.timeValue}/h</span>`],
+    ['Parking', (e, r) => `${rm(e.parkingCost)}<span class="sub">${e.parkingRate ? (r.slot.parkingUnit === 'hour' ? `RM ${num(e.parkingRate, 2)}/h × ${Math.ceil(e.chargeMin / 60)} h` : 'flat') : 'none'}</span>`],
     ['Wear', (e) => `${rm(e.wearCost)}<span class="sub">RM ${settings.wearPerKm}/km</span>`],
   ];
   html += `<div class="compare"><h2>Side by side</h2><div class="cmp-scroll"><table class="cmp ${sorted.length <= 2 ? 'fit' : 'wide'}">
@@ -523,6 +529,7 @@ function renderResults(rows) {
     <tbody>
       ${rowsHtml.map(([label, fn]) => `<tr><td>${label}</td>${sorted.map(r => cell(r, fn)).join('')}</tr>`).join('')}
       <tr class="total"><td>All-in</td>${sorted.map(r => cell(r, (e) => e.socArrive < 0 ? '—' : rm(e.total))).join('')}</tr>
+      <tr class="time"><td>Your time</td>${sorted.map(r => r.ev && r.ev.socArrive >= 0 ? `<td class="${r === fastestOk ? 'fast' : ''}">${Math.round(r.ev.totalMin)} min<span class="sub">${Math.round(r.ev.driveMin)} + ${Math.round(r.ev.chargeMin)} min</span></td>` : '<td class="dead">—</td>').join('')}</tr>
     </tbody></table></div>
     ${sorted.some(r => r.error) ? `<div class="hint" style="padding:0 18px 10px">${sorted.filter(r => r.error).map(r => esc(nameOf(r)) + ': ' + esc(r.error)).join(' ')}</div>` : ''}
     <div class="hint" style="padding:0 18px 10px">Distance: ${esc([...new Set(rows.filter(r => r.src).map(r => r.src))].join(' / ') || 'n/a')}.</div>
@@ -535,10 +542,10 @@ function renderResults(rows) {
       const e = r.ev; const pct = (v) => (v / maxTotal * 100).toFixed(1) + '%';
       return `<div class="bar-row ${r === best ? 'best' : ''}">
         <div class="bar-head"><span class="n ${r === best ? 'best' : ''}">${esc(nameOf(r))}</span><span class="t">${rm(e.total)}</span></div>
-        <div class="bar"><div class="bar-seg c" data-w="${pct(e.chargeCost)}" title="Charging ${rm(e.chargeCost)}"></div><div class="bar-seg t" data-w="${pct(e.timeCost)}" title="Time ${rm(e.timeCost)}"></div><div class="bar-seg w" data-w="${pct(e.wearCost)}" title="Wear ${rm(e.wearCost)}"></div></div>
+        <div class="bar"><div class="bar-seg c" data-w="${pct(e.chargeCost)}" title="Charging ${rm(e.chargeCost)}"></div><div class="bar-seg t" data-w="${pct(e.parkingCost)}" title="Parking ${rm(e.parkingCost)}"></div><div class="bar-seg w" data-w="${pct(e.wearCost)}" title="Wear ${rm(e.wearCost)}"></div></div>
       </div>`;
     }).join('')}
-    <div class="legend"><span><i style="background:#f5f5f7"></i>Charging</span><span><i style="background:#7d7d85"></i>Your time</span><span><i style="background:#3c3c42"></i>Wear</span></div>
+    <div class="legend"><span><i style="background:#f5f5f7"></i>Charging</span><span><i style="background:#7d7d85"></i>Parking</span><span><i style="background:#3c3c42"></i>Wear</span></div>
   </div>`;
 
   out.innerHTML = html;

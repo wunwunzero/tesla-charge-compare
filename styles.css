@@ -34,10 +34,11 @@ svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width:
 /* ---- top bar ---- */
 .topbar {
   display: flex; align-items: center; justify-content: space-between;
+  width: 100%;
   padding: calc(14px + env(safe-area-inset-top)) 20px 14px;
   position: sticky; top: 0; z-index: 5;
-  background: rgba(0,0,0,.72);
-  -webkit-backdrop-filter: saturate(160%) blur(20px); backdrop-filter: saturate(160%) blur(20px);
+  background: var(--bg);
+  border-bottom: 1px solid var(--line);
 }
 .brand { display: flex; align-items: center; gap: 12px; }
 .logo { width: 34px; height: 34px; border-radius: 9px; display: block; box-shadow: 0 0 0 1px var(--line); }
@@ -216,6 +217,10 @@ table.cmp tr.total td:first-child { font-size: 13px; padding-top: 18px; }
 table.cmp td.best { color: var(--green); }
 table.cmp td.dead { color: var(--red); }
 table.cmp td.tight { color: var(--amber); }
+table.cmp tr.time td { font-size: 16px; font-weight: 500; }
+table.cmp tr.time td:first-child { font-size: 12px; font-weight: 400; }
+table.cmp tr.time td.fast { color: var(--text); }
+table.cmp tr.time td:not(.fast):not(:first-child) { color: var(--text-2); }
 
 .bars { background: var(--surface); border-radius: var(--r-lg); padding: 18px; }
 .bar-row { margin-top: 14px; }
@@ -238,7 +243,7 @@ table.cmp td.tight { color: var(--amber); }
 
 /* ---- dialog ---- */
 dialog { border: none; border-radius: 24px; background: var(--surface); color: var(--text); padding: 20px; width: min(560px, calc(100vw - 24px)); max-height: 92vh; }
-dialog::backdrop { background: rgba(0,0,0,.7); -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px); }
+dialog::backdrop { background: rgba(0,0,0,.78); }
 dialog form { display: flex; flex-direction: column; gap: 8px; }
 dialog .card-head { margin-bottom: 4px; }
 .dlg-title { font-size: 20px; font-weight: 600; text-transform: none; letter-spacing: -.01em; color: var(--text); }
