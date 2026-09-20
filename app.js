@@ -369,6 +369,15 @@ function bindSettings() {
   $('#bannerSettings').addEventListener('click', open);
   $('#settingsClose').addEventListener('click', () => dlg.close());
   $('#btnDiag').addEventListener('click', runDiagnostics);
+  $('#btnPasteKey').addEventListener('click', async () => {
+    try {
+      const t = await navigator.clipboard.readText();
+      const k = cleanKey(t);
+      if (!k) return showToast('Clipboard has no key in it. Copy the key first.');
+      $('#setApiKey').value = k;
+      showToast(k.length === 39 && k.startsWith('AIza') ? 'Key pasted. Tap Test, then Save.' : `Pasted ${k.length} characters. Check it and tap Test.`);
+    } catch (e) { showToast('Could not read clipboard. Long-press the field and paste instead.'); }
+  });
   $('#settingsReset').addEventListener('click', () => { const key = settings.apiKey; settings = { ...DEFAULTS, apiKey: key }; fillSettings(); });
   $('#settingsForm').addEventListener('submit', () => {
     const oldKey = settings.apiKey;

@@ -265,3 +265,7 @@ input:focus-visible, select:focus-visible { outline: none; }
 .diag.bad b { color: var(--red); }
 /* Google autocomplete widget colours */
 gmp-place-autocomplete { color-scheme: dark; --gmp-mat-color-surface: var(--surface-2); --gmp-mat-color-on-surface: var(--text); --gmp-mat-color-on-surface-variant: var(--text-2); --gmp-mat-color-primary: var(--green); --gmp-mat-color-outline: var(--line-strong); --gmp-mat-color-neutral-container: var(--surface-3); --gmp-mat-color-on-neutral-container: var(--text); --gmp-mat-color-info: var(--text-2); }
+
+.keyrow { flex-wrap: nowrap; align-items: stretch; margin-top: 0; }
+.keyrow input { flex: 1; min-width: 0; font-size: 14px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.keyrow .btn { flex: none; }

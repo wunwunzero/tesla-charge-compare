@@ -124,7 +124,7 @@
     </details>
   </section>
 
-  <p class="foot"><span id="ver">v6 · 20 Sep 2026</span><br>Estimates. Consumption, charging curve and losses are approximations for a 2024 Model 3 Long Range AWD. Parking and idle fees not included.</p>
+  <p class="foot"><span id="ver">v7 · 20 Sep 2026</span><br>Estimates. Consumption, charging curve and losses are approximations for a 2024 Model 3 Long Range AWD. Parking and idle fees not included.</p>
 </main>
 
 <div class="actionbar">
@@ -140,7 +140,12 @@
     </div>
 
     <h3>Google Maps</h3>
-    <label>API key <input type="password" id="setApiKey" autocomplete="off" placeholder="AIza…"></label>
+    <label>API key
+      <div class="row keyrow">
+        <input type="text" id="setApiKey" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" inputmode="text" placeholder="AIza…">
+        <button type="button" id="btnPasteKey" class="btn secondary">Paste</button>
+      </div>
+    </label>
     <p class="hint">Needs <b>Maps JavaScript API</b>, <b>Places API (New)</b> and <b>Routes API</b> enabled. Restrict it to this site's referrer. Stored only in this browser.</p>
     <button type="button" id="btnDiag" class="btn secondary small">Test this key</button>
     <div id="diagOut"></div>
