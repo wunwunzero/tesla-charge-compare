@@ -55,6 +55,8 @@ const rm = (v) => 'RM ' + (Math.round(v * 100) / 100).toFixed(2);
 const num = (v, d = 1) => Number(v).toFixed(d);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const uid = () => Math.random().toString(36).slice(2, 10);
+const ICON = (n) => `<svg><use href="#i-${n}"/></svg>`;
+const LOCATE_HTML = ICON('locate') + '<span>Use my location</span>';
 
 // ---------- physics ----------
 function dcMaxKw(soc) {
@@ -225,14 +227,14 @@ function bindOrigin() {
   $('#btnLocate').addEventListener('click', () => {
     const btn = $('#btnLocate');
     if (!navigator.geolocation) return showToast('Geolocation not available in this browser.');
-    btn.disabled = true; btn.textContent = 'Locating…';
+    btn.disabled = true; btn.innerHTML = ICON('locate') + '<span>Locating…</span>';
     navigator.geolocation.getCurrentPosition(pos => {
       state.origin = { lat: pos.coords.latitude, lng: pos.coords.longitude, label: `Current location (±${Math.round(pos.coords.accuracy)} m)` };
       persist(); renderOrigin();
-      btn.disabled = false; btn.innerHTML = '&#9737; Use my location';
+      btn.disabled = false; btn.innerHTML = LOCATE_HTML;
     }, err => {
       showToast('Location failed: ' + err.message + (location.protocol === 'http:' && location.hostname !== 'localhost' ? ' (needs HTTPS)' : ''));
-      btn.disabled = false; btn.innerHTML = '&#9737; Use my location';
+      btn.disabled = false; btn.innerHTML = LOCATE_HTML;
     }, { enableHighAccuracy: true, timeout: 15000, maximumAge: 60000 });
   });
   renderOrigin();
@@ -297,7 +299,7 @@ function renderSlotSummary(node, slot) {
     parts.push(esc(slot.address || ''));
     parts.push(`<b>RM ${num(slot.rate, 2)}/kWh</b> · ${esc(slot.type)} ${esc(slot.kw)} kW${slot.gentari ? ' · <span class="tag">Gentari deal</span>' : ''}`);
   }
-  if (slot.lat != null) parts.push(`<span class="hint">📍 pinned</span>`); else if (slot.address && !slot.favId) parts.push(`<span class="hint">No coordinates. Pick from search or enter manual km.</span>`);
+  if (slot.lat != null) parts.push(`<span>Location pinned</span>`); else if (slot.address && !slot.favId) parts.push(`<span class="hint">No coordinates. Pick from search or enter manual km.</span>`);
   s.innerHTML = parts.filter(Boolean).join('<br>');
 }
 
@@ -309,9 +311,9 @@ function renderFavs() {
   for (const f of favs) {
     const d = document.createElement('div');
     d.className = 'fav-item';
-    d.innerHTML = `<div class="meta"><div class="name">${esc(f.name)}${f.gentari ? '<span class="tag">Gentari</span>' : ''}<span class="tag type">${esc(f.type)} ${esc(f.kw)} kW</span></div>
+    d.innerHTML = `<div class="meta"><div class="name"><span>${esc(f.name)}</span>${f.gentari ? '<span class="tag">Gentari</span>' : ''}<span class="tag type">${esc(f.type)} ${esc(f.kw)} kW</span></div>
       <div class="detail">RM ${num(f.rate, 2)}/kWh · ${esc(f.address || (f.lat != null ? `${num(f.lat, 4)}, ${num(f.lng, 4)}` : 'no location'))}</div></div>
-      <button class="icon-btn" data-act="edit" aria-label="Edit">✎</button><button class="icon-btn" data-act="del" aria-label="Delete">🗑</button>`;
+      <button class="icon-btn" data-act="edit" aria-label="Edit">${ICON('edit')}</button><button class="icon-btn" data-act="del" aria-label="Delete">${ICON('trash')}</button>`;
     $('[data-act=edit]', d).addEventListener('click', () => editFav(f));
     $('[data-act=del]', d).addEventListener('click', () => { if (confirm(`Delete "${f.name}"?`)) { favs = favs.filter(x => x.id !== f.id); save(LS.favs, favs); renderFavs(); renderSlots(); } });
     list.appendChild(d);
@@ -394,7 +396,7 @@ async function compare() {
     if (!hasManual && !hasPin) problems.push(`${label}: pick its location from search or enter manual km.`);
     if (!hasManual && hasPin && !state.origin) problems.push(`Set a starting point (or enter manual km for ${label}).`);
   });
-  if (problems.length) { out.classList.remove('hidden'); out.innerHTML = `<div class="verdict warn"><div class="headline">Missing info</div><ul>${problems.map(p => `<li>${esc(p)}</li>`).join('')}</ul></div>`; out.scrollIntoView({ behavior: 'smooth' }); return; }
+  if (problems.length) { out.classList.remove('hidden'); out.innerHTML = `<div class="verdict warn"><div class="eyebrow">Before comparing</div><div class="headline">A few things missing</div><ul>${problems.map(p => `<li>${esc(p)}</li>`).join('')}</ul></div>`; scrollToResults(); return; }
 
   btn.disabled = true; btn.textContent = 'Working…';
   try {
@@ -419,57 +421,98 @@ async function compare() {
     renderResults(rows);
   } catch (e) {
     out.classList.remove('hidden');
-    out.innerHTML = `<div class="verdict warn"><div class="headline">Could not compare</div><div class="sub">${esc(e.message)}</div></div>`;
+    out.innerHTML = `<div class="verdict bad"><div class="eyebrow">Error</div><div class="headline">Could not compare</div><div class="sub">${esc(e.message)}</div></div>`;
   } finally { btn.disabled = false; btn.textContent = 'Compare'; }
-  out.scrollIntoView({ behavior: 'smooth' });
+  scrollToResults();
 }
 
 function renderResults(rows) {
   const out = $('#results');
+  const nameOf = (r) => r.slot.name || 'Charger ' + (state.slots.indexOf(r.slot) + 1);
   const ok = rows.filter(r => r.ev && r.ev.socArrive >= 0);
   const best = ok.length ? ok.reduce((a, b) => a.ev.total <= b.ev.total ? a : b) : null;
   const sorted = [...rows].sort((a, b) => (a.ev?.total ?? Infinity) - (b.ev?.total ?? Infinity));
   let html = '';
+
+  // ---- verdict ----
   if (best) {
     const others = ok.filter(r => r !== best);
     const runner = others.length ? others.reduce((a, b) => a.ev.total <= b.ev.total ? a : b) : null;
     const diff = runner ? runner.ev.total - best.ev.total : 0;
     const chargeDiff = runner ? runner.ev.chargeCost - best.ev.chargeCost : 0;
-    const name = best.slot.name || 'Charger ' + (state.slots.indexOf(best.slot) + 1);
-    html += `<div class="verdict"><div class="headline">Go to ${esc(name)}</div>
-      <div class="sub">${runner ? `Saves <b>${rm(diff)}</b> all-in vs ${esc(runner.slot.name || 'the other charger')}${Math.sign(chargeDiff) !== Math.sign(diff) && Math.abs(chargeDiff) > 0.01 ? ` (charging alone is ${rm(Math.abs(chargeDiff))} ${chargeDiff < 0 ? 'more' : 'less'} there, but time and driving tip it)` : ` (${rm(Math.abs(chargeDiff))} ${chargeDiff >= 0 ? 'less' : 'more'} on charging alone)`}.` : 'Only one viable option.'}
-      Arrive at about ${Math.round(best.ev.socArrive)}%, charge for ~${Math.round(best.ev.chargeMin)} min to ${state.socTarget}%.</div></div>`;
-  } else {
-    html += `<div class="verdict warn"><div class="headline">No viable charger</div><div class="sub">You would not make it to any of them on the current charge.</div></div>`;
-  }
-  for (const r of sorted) {
-    const s = r.slot; const name = s.name || 'Charger ' + (state.slots.indexOf(s) + 1);
-    if (!r.ev) { html += `<div class="result"><div class="head"><div class="name">${esc(name)}</div><div class="total">—</div></div><div class="flag">${esc(r.error)}</div></div>`; continue; }
-    const e = r.ev;
-    const unreachable = e.socArrive < 0;
-    const low = !unreachable && e.socArrive < 8;
-    html += `<div class="result ${r === best ? 'best' : ''}">
-      <div class="head"><div><div class="name">${esc(name)}${s.gentari ? '<span class="tag">Gentari deal</span>' : ''}</div><div class="addr">${esc(s.address || '')}</div></div><div class="total">${unreachable ? '—' : rm(e.total)}</div></div>
-      <table>
-        <tr><td colspan="2">Drive there<span class="sub">${num(e.km, 1)} km · ${Math.round(e.driveMin)} min · uses ${num(e.driveKwh, 1)} kWh · arrive ${Math.round(e.socArrive)}%</span></td></tr>
-        <tr><td>Charging ${num(e.billedKwh, 1)} kWh<span class="sub">${s.gentari ? `listed ${rm(e.listedCost)} at RM ${num(e.rate, 2)}/kWh → pay RM ${num(settings.gentariPay, 0)} per RM ${num(settings.gentariCredit, 0)} credit = RM ${num(e.effRate, 3)}/kWh effective` : `RM ${num(e.rate, 2)}/kWh, incl. ${s.type === 'AC' ? settings.acLoss : settings.dcLoss}% losses`}<br>of which replacing the drive energy: ${rm(e.detourEnergyCost)}</span></td><td>${rm(e.chargeCost)}</td></tr>
-        <tr><td>Your time<span class="sub">${Math.round(e.driveMin)} min driving + ${Math.round(e.chargeMin)} min charging (${esc(s.type)} ${esc(s.kw)} kW) at RM ${settings.timeValue}/h</span></td><td>${rm(e.timeCost)}</td></tr>
-        <tr><td>Tyres and wear<span class="sub">${num(e.km, 1)} km at RM ${settings.wearPerKm}/km</span></td><td>${rm(e.wearCost)}</td></tr>
-        <tr class="sum"><td>All-in</td><td>${rm(e.total)}</td></tr>
-      </table>
-      ${unreachable ? '<div class="flag">Cannot reach: you would run out before arriving.</div>' : low ? `<div class="flag warn">Tight: arriving at ${Math.round(e.socArrive)}%.</div>` : ''}
-      <div class="src">Distance: ${esc(r.src)}.</div>
+    let why = '';
+    if (runner) {
+      const other = diff - chargeDiff; // saving from driving + time + wear
+      if (Math.abs(diff) < 1) why = 'Practically a tie. Go with whichever is more convenient.';
+      else if (chargeDiff <= 0.01) why = `Charging alone is ${rm(-chargeDiff)} cheaper at ${esc(nameOf(runner))}, but the extra driving and time there outweigh it.`;
+      else if (other < -0.01) why = `Charging itself is ${rm(chargeDiff)} cheaper here. The longer drive and session give back ${rm(-other)} of that.`;
+      else why = `Cheaper on charging by ${rm(chargeDiff)} and on driving and time by ${rm(other)}.`;
+    }
+    html += `<div class="verdict">
+      <div class="eyebrow">Recommendation</div>
+      <div class="headline">Go to ${esc(nameOf(best))}</div>
+      ${runner ? `<div class="saving"><span class="amt">${rm(diff)}</span><span class="vs">saved all-in vs ${esc(nameOf(runner))}</span></div>` : ''}
+      <div class="sub">${why} Arrive at about ${Math.round(best.ev.socArrive)}%, charge about ${Math.round(best.ev.chargeMin)} min to ${state.socTarget}%.</div>
     </div>`;
+  } else {
+    html += `<div class="verdict bad"><div class="eyebrow">Recommendation</div><div class="headline">None reachable</div><div class="sub">You would not make it to any of these on the current charge.</div></div>`;
   }
+
+  // ---- side-by-side table ----
+  const cell = (r, fn, cls = '') => {
+    if (!r.ev) return `<td class="dead">—</td>`;
+    const dead = r.ev.socArrive < 0;
+    return `<td class="${cls}${dead ? ' dead' : ''}${r === best ? ' best' : ''}">${fn(r.ev, r)}</td>`;
+  };
+  const rowsHtml = [
+    ['Drive', (e) => `${num(e.km, 1)} km<span class="sub">${Math.round(e.driveMin)} min · ${num(e.driveKwh, 1)} kWh</span>`],
+    ['Arrive at', (e) => e.socArrive < 0 ? `Out of charge<span class="sub">short by ${Math.round(-e.socArrive)}%</span>` : `${Math.round(e.socArrive)}%${e.socArrive < 8 ? '<span class="sub">tight</span>' : ''}`],
+    ['Charge', (e, r) => `${num(e.billedKwh, 1)} kWh<span class="sub">${Math.round(e.chargeMin)} min · ${esc(r.slot.type)} ${esc(r.slot.kw)} kW</span>`],
+    ['Charging cost', (e, r) => `${rm(e.chargeCost)}<span class="sub">${r.slot.gentari ? `RM ${num(e.effRate, 3)}/kWh after credit` : `RM ${num(e.rate, 2)}/kWh`}</span>`],
+    ['Your time', (e) => `${rm(e.timeCost)}<span class="sub">${Math.round(e.driveMin + e.chargeMin)} min at RM ${settings.timeValue}/h</span>`],
+    ['Wear', (e) => `${rm(e.wearCost)}<span class="sub">RM ${settings.wearPerKm}/km</span>`],
+  ];
+  html += `<div class="compare"><h2>Side by side</h2><div class="cmp-scroll"><table class="cmp ${sorted.length <= 2 ? 'fit' : 'wide'}">
+    <thead><tr><th></th>${sorted.map(r => `<th class="${r === best ? 'best' : ''}"><span class="name">${esc(nameOf(r))}</span><span class="tags">${r.slot.gentari ? '<span class="tag">Gentari</span>' : ''}<span class="tag type">${esc(r.slot.type)}</span></span></th>`).join('')}</tr></thead>
+    <tbody>
+      ${rowsHtml.map(([label, fn]) => `<tr><td>${label}</td>${sorted.map(r => cell(r, fn)).join('')}</tr>`).join('')}
+      <tr class="total"><td>All-in</td>${sorted.map(r => cell(r, (e) => e.socArrive < 0 ? '—' : rm(e.total))).join('')}</tr>
+    </tbody></table></div>
+    ${sorted.some(r => r.error) ? `<div class="hint" style="padding:0 18px 10px">${sorted.filter(r => r.error).map(r => esc(nameOf(r)) + ': ' + esc(r.error)).join(' ')}</div>` : ''}
+    <div class="hint" style="padding:0 18px 10px">Distance: ${esc([...new Set(rows.filter(r => r.src).map(r => r.src))].join(' / ') || 'n/a')}.</div>
+  </div>`;
+
+  // ---- stacked bars ----
+  const maxTotal = Math.max(...ok.map(r => r.ev.total), 0.01);
+  html += `<div class="bars"><h2>Where the money goes</h2>
+    ${sorted.filter(r => r.ev && r.ev.socArrive >= 0).map(r => {
+      const e = r.ev; const pct = (v) => (v / maxTotal * 100).toFixed(1) + '%';
+      return `<div class="bar-row ${r === best ? 'best' : ''}">
+        <div class="bar-head"><span class="n ${r === best ? 'best' : ''}">${esc(nameOf(r))}</span><span class="t">${rm(e.total)}</span></div>
+        <div class="bar"><div class="bar-seg c" data-w="${pct(e.chargeCost)}" title="Charging ${rm(e.chargeCost)}"></div><div class="bar-seg t" data-w="${pct(e.timeCost)}" title="Time ${rm(e.timeCost)}"></div><div class="bar-seg w" data-w="${pct(e.wearCost)}" title="Wear ${rm(e.wearCost)}"></div></div>
+      </div>`;
+    }).join('')}
+    <div class="legend"><span><i style="background:#f5f5f7"></i>Charging</span><span><i style="background:#7d7d85"></i>Your time</span><span><i style="background:#3c3c42"></i>Wear</span></div>
+  </div>`;
+
   out.innerHTML = html;
   out.classList.remove('hidden');
+  // grow bars after paint
+  $$('.bar-seg', out).forEach(el => el.style.width = '0%');
+  requestAnimationFrame(() => requestAnimationFrame(() => $$('.bar-seg', out).forEach(el => el.style.width = el.dataset.w)));
+}
+
+function scrollToResults() {
+  const out = $('#results');
+  const top = out.getBoundingClientRect().top + window.scrollY - ($('.topbar').offsetHeight + 12);
+  window.scrollTo({ top, behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
 }
 
 // ---------- misc ----------
 let toastTimer;
 function showToast(msg) {
   let t = $('#toast');
-  if (!t) { t = document.createElement('div'); t.id = 'toast'; t.style.cssText = 'position:fixed;left:50%;bottom:24px;transform:translateX(-50%);background:var(--text);color:var(--bg);padding:10px 14px;border-radius:10px;font-size:14px;z-index:99;max-width:90vw;box-shadow:0 4px 20px rgba(0,0,0,.3)'; document.body.appendChild(t); }
+  if (!t) { t = document.createElement('div'); t.id = 'toast'; document.body.appendChild(t); }
   t.textContent = msg; t.style.display = 'block';
   clearTimeout(toastTimer); toastTimer = setTimeout(() => t.style.display = 'none', 5000);
 }
