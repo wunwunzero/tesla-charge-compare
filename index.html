@@ -66,14 +66,26 @@
     <div class="hint" id="batteryHint"></div>
   </section>
 
-  <!-- ORIGIN -->
+  <!-- TRIP -->
   <section class="card">
-    <h2>Starting from</h2>
+    <h2>Trip</h2>
+    <div class="seg" id="tripMode" role="tablist">
+      <button type="button" data-mode="oneway" class="on">One way</button>
+      <button type="button" data-mode="round">Round trip</button>
+      <button type="button" data-mode="detour">Via charger</button>
+    </div>
+    <div class="hint" id="tripHint"></div>
+    <h3 class="sub-h">Starting from</h3>
     <div class="stack">
       <button id="btnLocate" class="btn secondary wide"><svg><use href="#i-locate"/></svg><span>Use my location</span></button>
       <div id="originAuto" class="autocomplete-slot"></div>
     </div>
     <div class="hint" id="originHint">No starting point set.</div>
+    <div id="destWrap" class="hidden">
+      <h3 class="sub-h">Going to</h3>
+      <div id="destAuto" class="autocomplete-slot"></div>
+      <div class="hint" id="destHint">No destination set.</div>
+    </div>
   </section>
 
   <!-- STATIONS -->
@@ -141,7 +153,23 @@
     </details>
   </section>
 
-  <p class="foot"><span id="ver">v10 · 20 Sep 2026</span><br>Estimates. Consumption, charging curve and losses are approximations for a 2024 Model 3 Long Range AWD. Idle fees not included.</p>
+  <!-- HISTORY -->
+  <section class="card">
+    <details id="histDetails">
+      <summary>
+        <h2>History <span id="histCount" class="pill"></span></h2>
+        <svg class="chev"><use href="#i-chev"/></svg>
+      </summary>
+      <div id="histSummary" class="hint"></div>
+      <div id="histList" class="hist-list"></div>
+      <div class="row" style="margin-top:10px">
+        <button type="button" id="histCopy" class="btn secondary small">Copy as CSV</button>
+        <button type="button" id="histClear" class="btn ghost small">Clear history</button>
+      </div>
+    </details>
+  </section>
+
+  <p class="foot"><span id="ver">v11 · 20 Sep 2026</span><br>Estimates. Consumption, charging curve and losses are approximations for a 2024 Model 3 Long Range AWD. Idle fees not included.</p>
 </main>
 
 <div class="actionbar">

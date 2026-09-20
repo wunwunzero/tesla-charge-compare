@@ -5,7 +5,8 @@
 'use strict';
 
 // ---------- constants ----------
-const LS = { settings: 'tcc.settings.v1', favs: 'tcc.favs.v1', state: 'tcc.state.v1' };
+const LS = { settings: 'tcc.settings.v1', favs: 'tcc.favs.v1', state: 'tcc.state.v1', routes: 'tcc.routes.v1', history: 'tcc.history.v1' };
+const ROUTE_TTL_MS = 10 * 60 * 1000;
 
 const DEFAULTS = {
   apiKey: '',
@@ -53,14 +54,17 @@ let favs = load(LS.favs, []);
 let state = load(LS.state, {
   socNow: 30, socTarget: 80,
   origin: null,                     // {lat,lng,label}
+  destination: null,                // {lat,lng,label} for detour mode
+  tripMode: 'oneway',               // oneway | round | detour
   slots: [ emptySlot(), emptySlot() ],
 });
+if (!['oneway', 'round', 'detour'].includes(state.tripMode)) state.tripMode = 'oneway';
+let history = load(LS.history, []);
 if (!Array.isArray(state.slots) || state.slots.length < 2) state.slots = [emptySlot(), emptySlot()];
 
 let mapsReady = false;
 let mapsLoading = null;
 let lastError = '';
-const routeCache = new Map();     // key -> {km, min}
 
 function emptySlot() {
   return { favId: '', name: '', address: '', lat: null, lng: null, rate: '', type: 'DC', kw: '', gentari: false, parking: '', parkingUnit: 'flat', manualKm: '', manualMin: '' };
@@ -116,8 +120,9 @@ function sessionPlan(slots) {
   return { mode: 'credit', gentari: g, billedKwh, packKwh: billedKwh * (1 - loss) };
 }
 
-function evaluate(st, km, driveMin, plan = { mode: 'target' }) {
-  const driveKwh = km * settings.whPerKm / 1000;
+function evaluate(st, legs, plan = { mode: 'target' }) {
+  const km = legs.extraKm, driveMin = legs.extraMin;
+  const driveKwh = legs.toKm * settings.whPerKm / 1000;
   const socArrive = state.socNow - driveKwh / settings.usableKwh * 100;
   const loss = (st.type === 'AC' ? settings.acLoss : settings.dcLoss) / 100;
   const roomKwh = Math.max(0, (100 - socArrive) / 100 * settings.usableKwh);
@@ -141,8 +146,9 @@ function evaluate(st, km, driveMin, plan = { mode: 'target' }) {
   const wearCost = km * settings.wearPerKm;
   const totalMin = driveMin + chargeMin;
   const total = chargeCost + parkingCost + wearCost;
-  return { km, driveMin, driveKwh, socArrive, socEnd, packKwh, billedKwh, rate, effRate, gFactor, listedCost, chargeCost, creditSession,
-           detourEnergyCost, chargeMin, parkingCost, parkingRate, wearCost, totalMin, total };
+  const socAfter = socEnd - legs.afterKm * settings.whPerKm / 1000 / settings.usableKwh * 100; // at destination / back home
+  return { km, driveMin, driveKwh, socArrive, socEnd, socAfter, packKwh, billedKwh, rate, effRate, gFactor, listedCost, chargeCost, creditSession,
+           detourEnergyCost, chargeMin, parkingCost, parkingRate, wearCost, totalMin, total, legs };
 }
 
 // ---------- Google Maps ----------
@@ -194,45 +200,82 @@ async function mountAutocomplete(container, onPick, placeholder) {
   return true;
 }
 
-/** Route matrix: origin -> stations[]. Returns array of {km,min}|null. */
-async function routeMatrix(origin, stations) {
-  const need = [];
-  const out = stations.map((st, i) => {
-    if (st.lat == null || st.lng == null) return null;
-    const key = [origin.lat.toFixed(4), origin.lng.toFixed(4), st.lat.toFixed(5), st.lng.toFixed(5)].join('|');
-    if (routeCache.has(key)) return routeCache.get(key);
-    need.push({ i, key, st });
-    return undefined;
-  });
-  if (need.length && settings.apiKey) {
-    const body = {
-      origins: [{ waypoint: { location: { latLng: { latitude: origin.lat, longitude: origin.lng } } } }],
-      destinations: need.map(n => ({ waypoint: { location: { latLng: { latitude: n.st.lat, longitude: n.st.lng } } } })),
-      travelMode: 'DRIVE',
-      routingPreference: 'TRAFFIC_AWARE',
-    };
+/** Generic route matrix with a 10-minute cache persisted in localStorage.
+ *  origins/destinations: [{lat,lng}]. Returns rows[o][d] = {km,min} | null. */
+const routeCache = new Map(Object.entries(load(LS.routes, {})).filter(([, v]) => Date.now() - v.t < ROUTE_TTL_MS));
+function saveRouteCache() { try { const o = {}; for (const [k, v] of routeCache) if (Date.now() - v.t < ROUTE_TTL_MS) o[k] = v; save(LS.routes, o); } catch {} }
+const rkey = (a, b) => [a.lat.toFixed(4), a.lng.toFixed(4), b.lat.toFixed(4), b.lng.toFixed(4)].join('|');
+async function matrix(origins, destinations) {
+  const out = origins.map(() => destinations.map(() => undefined));
+  const needO = new Set(), needD = new Set();
+  origins.forEach((o, i) => destinations.forEach((d, j) => {
+    if (o.lat == null || d.lat == null) { out[i][j] = null; return; }
+    const hit = routeCache.get(rkey(o, d));
+    if (hit && Date.now() - hit.t < ROUTE_TTL_MS) out[i][j] = hit.v; else { needO.add(i); needD.add(j); }
+  }));
+  if (needO.size && settings.apiKey) {
+    const oi = [...needO], dj = [...needD];
+    const wp = (p) => ({ waypoint: { location: { latLng: { latitude: p.lat, longitude: p.lng } } } });
     const res = await fetch('https://routes.googleapis.com/distanceMatrix/v2:computeRouteMatrix', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'X-Goog-Api-Key': settings.apiKey,
                  'X-Goog-FieldMask': 'originIndex,destinationIndex,duration,distanceMeters,condition' },
-      body: JSON.stringify(body),
+      body: JSON.stringify({ origins: oi.map(i => wp(origins[i])), destinations: dj.map(j => wp(destinations[j])), travelMode: 'DRIVE', routingPreference: 'TRAFFIC_AWARE' }),
     });
     if (!res.ok) {
       let msg = 'Routes API error ' + res.status;
       try { const j = await res.json(); msg += ': ' + (j.error?.message || j[0]?.error?.message || ''); } catch {}
       throw new Error(msg);
     }
-    const rows = await res.json();
-    for (const r of rows) {
-      const n = need[r.destinationIndex];
-      if (!n) continue;
-      if (r.condition && r.condition !== 'ROUTE_EXISTS') { out[n.i] = null; continue; }
-      const v = { km: (r.distanceMeters || 0) / 1000, min: parseFloat(r.duration || '0') / 60 };
-      routeCache.set(n.key, v);
-      out[n.i] = v;
+    for (const r of await res.json()) {
+      const i = oi[r.originIndex], j = dj[r.destinationIndex];
+      if (i == null || j == null) continue;
+      const v = (r.condition && r.condition !== 'ROUTE_EXISTS') ? null : { km: (r.distanceMeters || 0) / 1000, min: parseFloat(r.duration || '0') / 60 };
+      out[i][j] = v;
+      if (v) routeCache.set(rkey(origins[i], destinations[j]), { v, t: Date.now() });
+    }
+    saveRouteCache();
+  }
+  return out.map(row => row.map(v => v === undefined ? null : v));
+}
+
+/** Driving legs for each station under the current trip mode.
+ *  Returns per station: { toKm, toMin (origin -> charger), extraKm, extraMin (what the trip costs you), afterKm (charger -> destination), routed } */
+async function legsFor(stations, opts = {}) {
+  const mode = opts.mode || state.tripMode, origin = state.origin, dest = state.destination;
+  const est = (a, b) => { const km = haversineKm(a, b) * 1.3; return { km, min: km / 40 * 60 }; };
+  const pinned = stations.filter(st => st.lat != null);
+  let oc = stations.map(() => null), co = stations.map(() => null), cd = stations.map(() => null), od = null;
+  const live = !!settings.apiKey && !!origin;
+  if (live && pinned.length) {
+    const rows = await matrix([origin], pinned);
+    pinned.forEach((st, k) => { oc[stations.indexOf(st)] = rows[0][k]; });
+    if (mode === 'round') { const back = await matrix(pinned, [origin]); pinned.forEach((st, k) => { co[stations.indexOf(st)] = back[k][0]; }); }
+    if (mode === 'detour' && dest) {
+      const [toDest, direct] = await Promise.all([matrix(pinned, [dest]), matrix([origin], [dest])]);
+      pinned.forEach((st, k) => { cd[stations.indexOf(st)] = toDest[k][0]; }); od = direct[0][0];
     }
   }
-  return out.map(v => v === undefined ? null : v);
+  return stations.map((st, i) => {
+    const manual = st.manualKm !== '' && st.manualKm != null;
+    let routed = !!oc[i];
+    let to = oc[i] || (manual ? { km: Number(st.manualKm) || 0, min: st.manualMin !== '' && st.manualMin != null ? Number(st.manualMin) : (Number(st.manualKm) || 0) / MANUAL_AVG_KMH * 60 }
+                               : (origin && st.lat != null ? est(origin, st) : null));
+    if (!to) return null;
+    if (mode === 'oneway') return { toKm: to.km, toMin: to.min, extraKm: to.km, extraMin: to.min, afterKm: 0, routed, src: routed ? 'Google routing' : manual ? 'manual' : 'estimated' };
+    if (mode === 'round') {
+      const back = co[i] || to;
+      return { toKm: to.km, toMin: to.min, extraKm: to.km + back.km, extraMin: to.min + back.min, afterKm: back.km, routed: routed && !!co[i], src: routed ? 'Google routing' : manual ? 'manual (doubled)' : 'estimated' };
+    }
+    // detour: origin -> charger -> destination, minus going direct
+    if (manual && !oc[i]) return { toKm: to.km, toMin: to.min, extraKm: to.km, extraMin: to.min, afterKm: 0, routed: false, src: 'manual extra km' };
+    if (!dest) return null;
+    const toDest = cd[i] || (st.lat != null ? est(st, dest) : null);
+    const direct = od || (origin ? est(origin, dest) : null);
+    if (!toDest || !direct) return null;
+    return { toKm: to.km, toMin: to.min, extraKm: Math.max(0, to.km + toDest.km - direct.km), extraMin: Math.max(0, to.min + toDest.min - direct.min), afterKm: toDest.km,
+             routed: routed && !!cd[i] && !!od, src: (routed && cd[i] && od) ? 'Google routing' : 'estimated', directKm: direct.km };
+  });
 }
 
 // ---------- UI: battery ----------
@@ -268,6 +311,31 @@ function renderOrigin() {
   else h.textContent = 'No starting point set.';
   $('#clearOrigin')?.addEventListener('click', () => { state.origin = null; persist(); renderOrigin(); });
 }
+const TRIP_HINTS = {
+  oneway: 'Cost of driving from here to the charger. Use when charging is the errand.',
+  round: 'Drive to the charger and back to where you are now. Both legs count.',
+  detour: 'You are heading somewhere. Only the extra kilometres and minutes of going via the charger count, compared with driving straight there.',
+};
+function renderTrip() {
+  $$('#tripMode button').forEach(b => b.classList.toggle('on', b.dataset.mode === state.tripMode));
+  $('#tripHint').textContent = TRIP_HINTS[state.tripMode];
+  $('#destWrap').classList.toggle('hidden', state.tripMode !== 'detour');
+  const d = $('#destHint');
+  if (state.destination) d.innerHTML = `Going to <b>${esc(state.destination.label)}</b> <button class="link-btn" id="clearDest">clear</button>`; else d.textContent = 'No destination set.';
+  $('#clearDest')?.addEventListener('click', () => { state.destination = null; persist(); renderTrip(); });
+  $$('.slot .manual .row label').forEach((l, i) => {
+    const isKm = i % 2 === 0;
+    const txt = state.tripMode === 'detour' ? (isKm ? 'Extra km via charger' : 'Extra min') : state.tripMode === 'round' ? (isKm ? 'Km to charger (one way)' : 'Min (one way)') : (isKm ? 'Driving km' : 'Driving min');
+    l.firstChild.textContent = txt + ' ';
+  });
+}
+function bindTrip() {
+  $$('#tripMode button').forEach(b => b.addEventListener('click', () => { state.tripMode = b.dataset.mode; persist(); renderTrip(); renderBatteryHint(); }));
+  renderTrip();
+  mountAutocomplete($('#destAuto'), p => { state.destination = { lat: p.lat, lng: p.lng, label: p.name || p.address }; persist(); renderTrip(); }, 'Search your destination')
+    .then(ok => { if (!ok) $('#destAuto').innerHTML = '<div class="hint">Add a Google API key in Settings to search places.</div>'; });
+}
+
 function bindOrigin() {
   $('#btnLocate').addEventListener('click', () => {
     const btn = $('#btnLocate');
@@ -339,6 +407,7 @@ function renderSlots() {
   });
   $('#btnAddSlot').disabled = state.slots.length >= 4;
   renderBatteryHint();
+  if ($('#tripMode')) renderTrip();
 }
 function renderSlotSummary(node, slot) {
   const s = $('.slot-summary', node);
@@ -436,7 +505,7 @@ function bindSettings() {
     settings.operatorPrices = readOpTable();
     save(LS.settings, settings);
     renderBatteryHint(); renderKeyBanner();
-    if (settings.apiKey !== oldKey) { routeCache.clear(); if (settings.apiKey && !mapsReady) location.reload(); }
+    if (settings.apiKey !== oldKey) { routeCache.clear(); saveRouteCache(); if (settings.apiKey && !mapsReady) location.reload(); }
   });
   renderKeyBanner();
 }
@@ -483,6 +552,7 @@ async function compare() {
   const plan = sessionPlan(state.slots);
   if (plan.mode === 'target' && state.socTarget <= state.socNow) problems.push('Target charge must be above current charge.');
   if (plan.mode === 'credit' && state.socNow >= 99) problems.push('Battery is already full.');
+  if (state.tripMode === 'detour' && !state.destination && !state.slots.every(s => s.manualKm !== '' && s.manualKm != null)) problems.push('Set a destination for the via-charger trip, or enter extra km manually.');
   state.slots.forEach((s, i) => {
     const label = s.name || `Charger ${i + 1}`;
     if (!(Number(s.rate) >= 0) || s.rate === '') problems.push(`${label}: enter RM/kWh.`);
@@ -491,29 +561,14 @@ async function compare() {
     const hasPin = s.lat != null && s.lng != null;
     if (!hasManual && !hasPin) problems.push(`${label}: pick its location from search or enter manual km.`);
     if (!hasManual && hasPin && !state.origin) problems.push(`Set a starting point (or enter manual km for ${label}).`);
+    if (!hasManual && hasPin && !settings.apiKey) problems.push(`${label}: no Google key, so enter manual km.`);
   });
   if (problems.length) { out.classList.remove('hidden'); out.innerHTML = `<div class="verdict warn"><div class="eyebrow">Before comparing</div><div class="headline">A few things missing</div><ul>${problems.map(p => `<li>${esc(p)}</li>`).join('')}</ul></div>`; scrollToResults(); return; }
 
   btn.disabled = true; btn.textContent = 'Working…';
   try {
-    const needRoute = state.slots.map(s => !(s.manualKm !== '' && s.manualKm != null) && s.lat != null);
-    let routed = state.slots.map(() => null);
-    if (needRoute.some(Boolean)) {
-      if (!settings.apiKey) throw new Error('No Google API key. Add one in Settings or use manual km.');
-      const idx = needRoute.map((v, i) => v ? i : -1).filter(i => i >= 0);
-      const res = await routeMatrix(state.origin, idx.map(i => state.slots[i]));
-      idx.forEach((i, j) => routed[i] = res[j]);
-    }
-    const rows = state.slots.map((s, i) => {
-      let km, min, src;
-      if (!needRoute[i]) {
-        km = Number(s.manualKm) || 0;
-        min = s.manualMin !== '' && s.manualMin != null ? Number(s.manualMin) : km / MANUAL_AVG_KMH * 60;
-        src = 'manual distance';
-      } else if (routed[i]) { km = routed[i].km; min = routed[i].min; src = 'Google routing, live traffic'; }
-      else { return { slot: s, error: 'No driving route found.' }; }
-      return { slot: s, src, ev: evaluate(s, km, min, plan) };
-    });
+    const legs = await legsFor(state.slots);
+    const rows = state.slots.map((s, i) => legs[i] ? { slot: s, src: legs[i].src, ev: evaluate(s, legs[i], plan) } : { slot: s, error: 'No driving route found.' });
     renderResults(rows, plan);
   } catch (e) {
     out.classList.remove('hidden');
@@ -549,6 +604,7 @@ function renderResults(rows, plan = { mode: 'target' }) {
       <div class="headline">${esc(nameOf(best))}</div>
       ${runner ? `<div class="saving"><span class="amt">${rm(diff)}</span><span class="vs">cheaper than ${esc(nameOf(runner))}, charging + parking + wear</span></div>` : ''}
       <div class="sub">${timeLine} Arrive at about ${Math.round(best.ev.socArrive)}%, charge about ${Math.round(best.ev.chargeMin)} min to ${Math.round(best.ev.socEnd)}%.${fastest !== best && runner ? ` Quickest option: ${esc(nameOf(fastest))}.` : ''}</div>
+      <div class="logrow"><span class="lbl">Going with one of these? Log it, then fill in the receipt later.</span>${ok.map(r => `<button type="button" class="btn secondary small" data-log="${state.slots.indexOf(r.slot)}">Log ${esc(nameOf(r))}</button>`).join('')}</div>
       ${plan.mode === 'credit' ? `<div class="sub plan">Session fixed by the Gentari credit: RM ${num(settings.gentariCredit, 0)} buys ${num(plan.billedKwh, 1)} kWh at ${esc(plan.gentari.name || 'Gentari')} for RM ${num(settings.gentariPay, 0)}. Every charger is compared on adding the same ${num(plan.packKwh, 1)} kWh to the pack.</div>` : ''}
     </div>`;
   } else {
@@ -563,13 +619,14 @@ function renderResults(rows, plan = { mode: 'target' }) {
     return `<td class="${cls}${dead ? ' dead' : ''}${r === best ? ' best' : ''}">${fn(r.ev, r)}</td>`;
   };
   const rowsHtml = [
-    ['Drive', (e) => `${num(e.km, 1)} km<span class="sub">${Math.round(e.driveMin)} min · ${num(e.driveKwh, 1)} kWh</span>`],
+    [state.tripMode === 'oneway' ? 'Drive' : state.tripMode === 'round' ? 'Drive there and back' : 'Extra driving', (e) => `${num(e.km, 1)} km<span class="sub">${Math.round(e.driveMin)} min${state.tripMode !== 'oneway' ? ` · ${num(e.legs.toKm, 1)} km to charger` : ` · ${num(e.driveKwh, 1)} kWh`}</span>`],
     ['Arrive at', (e) => e.socArrive < 0 ? `Out of charge<span class="sub">short by ${Math.round(-e.socArrive)}%</span>` : `${Math.round(e.socArrive)}%${e.socArrive < 8 ? '<span class="sub">tight</span>' : ''}`],
     ['Charge', (e, r) => `${num(e.billedKwh, 1)} kWh<span class="sub">${Math.round(e.chargeMin)} min · ${esc(r.slot.type)} ${esc(r.slot.kw)} kW · to ${Math.round(e.socEnd)}%</span>`],
     ['Charging cost', (e, r) => `${rm(e.chargeCost)}<span class="sub">${e.creditSession ? `one RM ${num(settings.gentariCredit, 0)} credit · RM ${num(e.effRate, 3)}/kWh` : `RM ${num(e.rate, 2)}/kWh`}</span>`],
     ['Parking', (e, r) => `${rm(e.parkingCost)}<span class="sub">${e.parkingRate ? (r.slot.parkingUnit === 'hour' ? `RM ${num(e.parkingRate, 2)}/h × ${Math.ceil(e.chargeMin / 60)} h` : 'flat') : 'none'}</span>`],
     ['Wear', (e) => `${rm(e.wearCost)}<span class="sub">RM ${settings.wearPerKm}/km</span>`],
   ];
+  if (state.tripMode !== 'oneway') rowsHtml.splice(3, 0, [state.tripMode === 'round' ? 'Back home at' : 'At destination', (e) => `${Math.round(e.socAfter)}%${e.socAfter < 8 ? '<span class="sub">tight</span>' : ''}`]);
   html += `<div class="compare"><h2>Side by side</h2><div class="cmp-scroll"><table class="cmp ${sorted.length <= 2 ? 'fit' : 'wide'}">
     <thead><tr><th></th>${sorted.map(r => `<th class="${r === best ? 'best' : ''}"><span class="name">${esc(nameOf(r))}</span><span class="tags">${r.slot.gentari ? '<span class="tag">Gentari</span>' : ''}<span class="tag type">${esc(r.slot.type)}</span></span></th>`).join('')}</tr></thead>
     <tbody>
@@ -596,6 +653,10 @@ function renderResults(rows, plan = { mode: 'target' }) {
 
   out.innerHTML = html;
   out.classList.remove('hidden');
+  $$('[data-log]', out).forEach(b => b.addEventListener('click', () => {
+    const r = rows.find(x => state.slots.indexOf(x.slot) === Number(b.dataset.log));
+    if (r && r.ev) { logHistory(r, plan); b.textContent = 'Logged ✓'; b.disabled = true; }
+  }));
   // grow bars after paint
   $$('.bar-seg', out).forEach(el => el.style.width = '0%');
   requestAnimationFrame(() => requestAnimationFrame(() => $$('.bar-seg', out).forEach(el => el.style.width = el.dataset.w)));
@@ -663,14 +724,12 @@ async function findNearby() {
     cands = cands.map(c => ({ ...c, airKm: haversineKm(state.origin, c) })).filter(c => c.source === 'saved' ? c.airKm <= radius * 1.5 : true)
       .sort((a, b) => a.airKm - b.airKm).slice(0, 15);
     if (!cands.length) { out.innerHTML = `<div class="hint" style="margin-top:10px">Nothing within ${radius} km. Widen the radius or save a charger with a pinned location.</div>`; return; }
-    let routed = cands.map(() => null);
-    if (settings.apiKey) { try { routed = await routeMatrix(state.origin, cands); } catch (e) { notes.push(e.message); } }
+    let legs;
+    try { legs = await legsFor(cands); } catch (e) { notes.push(e.message); legs = await legsFor(cands, {}).catch(() => cands.map(() => null)); }
+    if (state.tripMode === 'detour' && !state.destination) notes.push('No destination set, so extra driving is measured one way to the charger.');
     const plan = sessionPlan(cands);
-    const rows = cands.map((c, i) => {
-      const km = routed[i] ? routed[i].km : c.airKm * 1.3;
-      const min = routed[i] ? routed[i].min : km / 40 * 60;
-      return { cand: c, ev: evaluate(c, km, min, plan), routed: !!routed[i] };
-    }).filter(r => r.ev.socArrive >= 0).sort((a, b) => a.ev.total - b.ev.total);
+    const rows = cands.map((c, i) => legs[i] ? { cand: c, ev: evaluate(c, legs[i], plan), routed: legs[i].routed } : null)
+      .filter(r => r && r.ev.socArrive >= 0).sort((a, b) => a.ev.total - b.ev.total);
     renderNearby(rows, plan, notes, radius);
   } catch (e) { out.innerHTML = `<div class="verdict bad"><div class="headline">Search failed</div><div class="sub">${esc(e.message)}</div></div>`; }
   finally { btn.disabled = false; btn.textContent = 'Find the cheapest charger nearby'; }
@@ -702,11 +761,71 @@ function renderNearby(rows, plan, notes, radius) {
     const picks = rows.slice(0, 2).map(r => {
       const c = r.cand; const slot = emptySlot();
       Object.assign(slot, { favId: c.favId || '', name: c.name, address: c.address, lat: c.lat, lng: c.lng, rate: c.rate, type: c.type, kw: c.kw, gentari: !!c.gentari, parking: c.parking ?? '', parkingUnit: c.parkingUnit || 'flat' });
-      if (!r.routed) { slot.manualKm = num(r.ev.km, 1); slot.manualMin = String(Math.round(r.ev.driveMin)); }
+      if (!r.routed) { slot.manualKm = num(r.ev.legs.toKm, 1); slot.manualMin = String(Math.round(r.ev.legs.toMin)); }
       return slot;
     });
     while (picks.length < 2) picks.push(emptySlot());
     state.slots = picks; persist(); renderSlots(); compare();
+  });
+}
+
+// ---------- history ----------
+function logHistory(r, plan) {
+  const e = r.ev, st = r.slot;
+  history.unshift({ id: uid(), t: Date.now(), name: st.name || 'Charger', gentari: !!st.gentari, type: st.type, kw: Number(st.kw) || 0, rate: Number(st.rate) || 0,
+    mode: state.tripMode, session: plan.mode, socNow: state.socNow, socArrive: Math.round(e.socArrive), socEnd: Math.round(e.socEnd),
+    predKwh: +e.billedKwh.toFixed(1), predCost: +e.chargeCost.toFixed(2), predParking: +e.parkingCost.toFixed(2), predTotal: +e.total.toFixed(2),
+    predChargeMin: Math.round(e.chargeMin), predDriveMin: Math.round(e.driveMin), km: +e.km.toFixed(1), actKwh: '', actCost: '', actMin: '' });
+  history = history.slice(0, 200);
+  save(LS.history, history); renderHistory(); showToast('Logged. Fill in the receipt under History when you are done.');
+}
+function renderHistory() {
+  $('#histCount').textContent = history.length || '';
+  const list = $('#histList'), sum = $('#histSummary');
+  if (!history.length) { list.innerHTML = ''; sum.textContent = 'Nothing logged yet. After a comparison, tap “Log” on the charger you chose, then enter the kWh and RM from the receipt here.'; return; }
+  const done = history.filter(h => h.actKwh !== '' && Number(h.actKwh) > 0);
+  if (done.length) {
+    const kwhErr = done.reduce((a, h) => a + (Number(h.actKwh) - h.predKwh) / h.predKwh, 0) / done.length * 100;
+    const costDone = done.filter(h => h.actCost !== '' && h.predCost > 0);
+    const costErr = costDone.length ? costDone.reduce((a, h) => a + (Number(h.actCost) - h.predCost) / h.predCost, 0) / costDone.length * 100 : null;
+    const minDone = done.filter(h => h.actMin !== '' && h.predChargeMin > 0);
+    const minErr = minDone.length ? minDone.reduce((a, h) => a + (Number(h.actMin) - h.predChargeMin) / h.predChargeMin, 0) / minDone.length * 100 : null;
+    const w = (v) => v == null ? '' : `${v > 0 ? '+' : ''}${v.toFixed(0)}%`;
+    sum.innerHTML = `${done.length} of ${history.length} sessions have receipts. Real kWh vs predicted: <b>${w(kwhErr)}</b>${costErr != null ? ` · cost <b>${w(costErr)}</b>` : ''}${minErr != null ? ` · charge time <b>${w(minErr)}</b>` : ''}. ${Math.abs(kwhErr) > 8 ? (kwhErr > 0 ? 'The car takes more than predicted: raise the loss % or Wh/km in Settings.' : 'The car takes less than predicted: lower the loss % or Wh/km in Settings.') : 'The model is close.'}`;
+  } else sum.textContent = `${history.length} logged, none with a receipt yet.`;
+  list.innerHTML = history.map(h => {
+    const d = new Date(h.t);
+    const dt = d.toLocaleDateString('en-MY', { day: 'numeric', month: 'short' }) + ' ' + d.toLocaleTimeString('en-MY', { hour: '2-digit', minute: '2-digit' });
+    const hasAct = h.actKwh !== '' && Number(h.actKwh) > 0;
+    const diff = hasAct ? `<div class="diff">Receipt: <b>${num(h.actKwh, 1)} kWh</b>${h.actCost !== '' ? `, <b>${rm(Number(h.actCost))}</b>` : ''}${h.actMin !== '' ? `, <b>${h.actMin} min</b>` : ''} · predicted ${num(h.predKwh, 1)} kWh${h.actCost !== '' ? `, ${rm(h.predCost)}` : ''}${h.actMin !== '' ? `, ${h.predChargeMin} min` : ''}</div>` : '';
+    return `<div class="hist" data-id="${h.id}">
+      <div class="top"><span class="n">${esc(h.name)}${h.gentari ? ' <span class="tag">Gentari</span>' : ''}</span><span class="dt">${esc(dt)}</span></div>
+      <div class="pred">${h.socNow}% → ${h.socEnd}% · ${num(h.predKwh, 1)} kWh · ${rm(h.predCost)} charging${h.predParking ? ` + ${rm(h.predParking)} parking` : ''} · ${h.predChargeMin} min charge · ${num(h.km, 1)} km · ${h.mode === 'round' ? 'round trip' : h.mode === 'detour' ? 'via charger' : 'one way'}</div>
+      <div class="act">
+        <label>Actual kWh <input type="number" step="0.1" min="0" inputmode="decimal" data-f="actKwh" value="${esc(h.actKwh)}" placeholder="${num(h.predKwh, 1)}"></label>
+        <label>Actual RM <input type="number" step="0.01" min="0" inputmode="decimal" data-f="actCost" value="${esc(h.actCost)}" placeholder="${num(h.predCost, 2)}"></label>
+        <button type="button" class="icon-btn" data-del aria-label="Delete">${ICON('trash')}</button>
+        <label style="grid-column:1">Charge min <input type="number" step="1" min="0" inputmode="numeric" data-f="actMin" value="${esc(h.actMin)}" placeholder="${h.predChargeMin}"></label>
+      </div>
+      ${diff}
+    </div>`;
+  }).join('');
+  $$('.hist input', list).forEach(i => i.addEventListener('change', e => {
+    const id = e.target.closest('.hist').dataset.id; const h = history.find(x => x.id === id); if (!h) return;
+    h[e.target.dataset.f] = e.target.value; save(LS.history, history); renderHistory();
+  }));
+  $$('.hist [data-del]', list).forEach(b => b.addEventListener('click', e => {
+    const id = e.target.closest('.hist').dataset.id;
+    if (confirm('Delete this entry?')) { history = history.filter(x => x.id !== id); save(LS.history, history); renderHistory(); }
+  }));
+}
+function bindHistory() {
+  renderHistory();
+  $('#histClear').addEventListener('click', () => { if (history.length && confirm('Clear all history?')) { history = []; save(LS.history, history); renderHistory(); } });
+  $('#histCopy').addEventListener('click', async () => {
+    const cols = ['t', 'name', 'gentari', 'type', 'kw', 'rate', 'mode', 'session', 'socNow', 'socArrive', 'socEnd', 'km', 'predKwh', 'predCost', 'predParking', 'predTotal', 'predChargeMin', 'predDriveMin', 'actKwh', 'actCost', 'actMin'];
+    const csv = [cols.join(','), ...history.map(h => cols.map(c => c === 't' ? new Date(h.t).toISOString() : JSON.stringify(h[c] ?? '')).join(','))].join('\n');
+    try { await navigator.clipboard.writeText(csv); showToast('History copied as CSV.'); } catch { showToast('Could not copy.'); }
   });
 }
 
@@ -737,7 +856,9 @@ function init() {
   bindSoc();
   bindSettings();
   bindOrigin();
+  bindTrip();
   bindFavs();
+  bindHistory();
   renderSlots();
   $('#btnAddSlot').addEventListener('click', () => { if (state.slots.length < 4) { state.slots.push(emptySlot()); persist(); renderSlots(); } });
   $('#btnCompare').addEventListener('click', compare);
@@ -749,5 +870,5 @@ function init() {
 document.addEventListener('DOMContentLoaded', init);
 
 // expose for debugging in console
-window.tcc = { evaluate: (st, km, min) => evaluate(st, km, min), chargeMinutes, dcMaxKw, get settings() { return settings; }, get state() { return state; } };
+window.tcc = { evaluate, legsFor, chargeMinutes, dcMaxKw, get settings() { return settings; }, get state() { return state; }, get history() { return history; } };
 })();
