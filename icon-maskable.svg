@@ -16,7 +16,8 @@
       <feGaussianBlur stdDeviation="14"/>
     </filter>
   </defs>
-  <rect width="512" height="512" rx="112" fill="url(#bg)"/>
+  <rect width="512" height="512" fill="url(#bg)"/>
+  <g transform="translate(256 256) scale(0.82) translate(-256 -256)">
   <!-- bolt path is centred on (32,32) in a 64 grid -->
   <g transform="translate(170 256) scale(5.9) translate(-32 -32)">
     <path d="M36 8 18 36h12l-4 20 20-30H34z" fill="url(#grey)"/>
@@ -24,5 +25,6 @@
   <g transform="translate(342 256) scale(5.9) translate(-32 -32)">
     <path d="M36 8 18 36h12l-4 20 20-30H34z" fill="#32d74b" opacity=".45" filter="url(#glow)"/>
     <path d="M36 8 18 36h12l-4 20 20-30H34z" fill="url(#green)"/>
+  </g>
   </g>
 </svg>
