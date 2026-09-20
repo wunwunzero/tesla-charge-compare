@@ -23,17 +23,18 @@ const DEFAULTS = {
 
 // Operators found by Google nearby search: [name, name matcher, default RM/kWh, Gentari credit applies]
 const OPERATORS = [
-  ['Gentari', /gentari/i, { DC: 1.40, AC: 0.95 }, true],
-  ['Tesla Supercharger', /tesla|supercharger/i, { DC: 0.93, AC: 0.93 }, false],
-  ['chargEV', /chargev|charge ev|yinson/i, { DC: 1.50, AC: 0.80 }, false],
-  ['JomCharge', /jomcharge|jom charge/i, { DC: 1.50, AC: 0.75 }, false],
-  ['ChargeSini', /chargesini|charge sini/i, { DC: 1.50, AC: 0.80 }, false],
-  ['DC Handal', /handal/i, { DC: 1.00, AC: 0.80 }, false],
-  ['TNB Electron', /tnb|electron/i, { DC: 1.50, AC: 0.90 }, false],
-  ['Shell Recharge', /shell/i, { DC: 1.20, AC: 0.90 }, false],
-  ['Charge N Go', /charge ?n ?go/i, { DC: 1.50, AC: 0.80 }, false],
-  ['Other', /.*/, { DC: 1.50, AC: 0.90 }, false],
+  ['Gentari', /gentari/i, { DC: 1.60, AC: 0.90 }, true],
+  ['Tesla Supercharger', /tesla|supercharger/i, { DC: 1.02, AC: 0.88 }, false],
+  ['chargEV', /chargev|charge ev|yinson/i, { DC: 1.60, AC: 0.90 }, false],
+  ['JomCharge', /jomcharge|jom charge/i, { DC: 1.60, AC: 0.90 }, false],
+  ['ChargeSini', /chargesini|charge sini/i, { DC: 1.60, AC: 0.90 }, false],
+  ['DC Handal', /handal/i, { DC: 1.60, AC: 0.90 }, false],
+  ['TNB Electron', /tnb|electron/i, { DC: 1.60, AC: 0.90 }, false],
+  ['Shell Recharge', /shell/i, { DC: 1.60, AC: 0.90 }, false],
+  ['Charge N Go', /charge ?n ?go/i, { DC: 1.60, AC: 0.90 }, false],
+  ['Other', /.*/, { DC: 1.60, AC: 0.90 }, false],
 ];
+const OP_PRICES_VERSION = 2; // bump when defaults change so stored copies are refreshed
 DEFAULTS.operatorPrices = Object.fromEntries(OPERATORS.map(o => [o[0], { ...o[2] }]));
 
 // Approximate DC charging curve for 2024 Model 3 LR AWD: [SoC %, max kW]
@@ -47,6 +48,7 @@ const MANUAL_AVG_KMH = 45; // used when km given but minutes blank
 // ---------- state ----------
 let settings = load(LS.settings, {});
 settings = { ...DEFAULTS, ...settings, operatorPrices: { ...DEFAULTS.operatorPrices, ...(settings.operatorPrices || {}) } };
+if (settings.opVersion !== OP_PRICES_VERSION) { settings.operatorPrices = { ...DEFAULTS.operatorPrices }; settings.opVersion = OP_PRICES_VERSION; save(LS.settings, settings); }
 let favs = load(LS.favs, []);
 let state = load(LS.state, {
   socNow: 30, socTarget: 80,
