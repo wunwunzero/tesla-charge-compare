@@ -41,6 +41,7 @@ if (!Array.isArray(state.slots) || state.slots.length < 2) state.slots = [emptyS
 
 let mapsReady = false;
 let mapsLoading = null;
+let lastError = '';
 const routeCache = new Map();     // key -> {km, min}
 
 function emptySlot() {
@@ -115,7 +116,7 @@ function loadMaps() {
   if (!settings.apiKey) return Promise.reject(new Error('No API key'));
   mapsLoading = new Promise((resolve, reject) => {
     window.__gmapsReady = () => { mapsReady = true; resolve(); };
-    window.gm_authFailure = () => { mapsReady = false; mapsLoading = null; reject(new Error('Google rejected the API key')); showToast('Google rejected the API key. Check it in Settings.'); };
+    window.gm_authFailure = () => { mapsReady = false; mapsLoading = null; lastError = 'Maps JavaScript API rejected the key (gm_authFailure). Check key, referrer restriction and that Maps JavaScript API is enabled.'; reject(new Error('Google rejected the API key')); showToast('Google rejected the API key. Check it in Settings.'); };
     const s = document.createElement('script');
     s.src = 'https://maps.googleapis.com/maps/api/js?key=' + encodeURIComponent(settings.apiKey) + '&libraries=places&v=weekly&loading=async&callback=__gmapsReady';
     s.async = true;
@@ -137,6 +138,8 @@ async function mountAutocomplete(container, onPick, placeholder) {
     el = new google.maps.places.PlaceAutocompleteElement({ includedRegionCodes: ['my'] });
   } catch { try { el = new google.maps.places.PlaceAutocompleteElement({ componentRestrictions: { country: ['my'] } }); } catch { return false; } }
   if (placeholder) el.setAttribute('placeholder', placeholder);
+  el.addEventListener('gmp-error', (ev) => { const e = ev.error || ev.detail || {}; lastError = 'Places: ' + (e.name || '') + ' ' + (e.message || JSON.stringify(e)); showToast(lastError); });
+  el.addEventListener('gmp-requesterror', (ev) => { const e = ev.error || ev.detail || {}; lastError = 'Places: ' + (e.name || '') + ' ' + (e.message || JSON.stringify(e)); showToast(lastError); });
   const handle = async (place) => {
     try {
       await place.fetchFields({ fields: ['displayName', 'formattedAddress', 'location'] });
@@ -365,6 +368,7 @@ function bindSettings() {
   $('#btnSettings').addEventListener('click', open);
   $('#bannerSettings').addEventListener('click', open);
   $('#settingsClose').addEventListener('click', () => dlg.close());
+  $('#btnDiag').addEventListener('click', runDiagnostics);
   $('#settingsReset').addEventListener('click', () => { const key = settings.apiKey; settings = { ...DEFAULTS, apiKey: key }; fillSettings(); });
   $('#settingsForm').addEventListener('submit', () => {
     const oldKey = settings.apiKey;
@@ -379,6 +383,34 @@ function bindSettings() {
   });
   renderKeyBanner();
 }
+async function runDiagnostics() {
+  const out = $('#diagOut');
+  const key = $('#setApiKey').value.trim();
+  const line = (label, ok, msg) => `<div class="diag ${ok ? 'ok' : 'bad'}"><b>${ok ? '✓' : '✕'} ${esc(label)}</b><span>${esc(msg)}</span></div>`;
+  if (!key) { out.innerHTML = line('API key', false, 'No key entered.'); return; }
+  out.innerHTML = '<div class="hint">Testing…</div>';
+  const rows = [];
+  rows.push(line('Key format', /^AIza[0-9A-Za-z_-]{35}$/.test(key), key.length + ' characters' + (/\s/.test($('#setApiKey').value) ? ', contains whitespace' : '')));
+  rows.push(line('This page', true, location.origin + location.pathname));
+  // Places API (New) autocomplete via REST
+  try {
+    const r = await fetch('https://places.googleapis.com/v1/places:autocomplete', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Goog-Api-Key': key }, body: JSON.stringify({ input: 'Gentari', includedRegionCodes: ['my'] }) });
+    const j = await r.json().catch(() => ({}));
+    rows.push(line('Places API (New)', r.ok, r.ok ? `${(j.suggestions || []).length} suggestions for “Gentari”` : `HTTP ${r.status}: ${j.error?.message || 'unknown error'}`));
+  } catch (e) { rows.push(line('Places API (New)', false, e.message)); }
+  // Routes API
+  try {
+    const wp = (lat, lng) => ({ waypoint: { location: { latLng: { latitude: lat, longitude: lng } } } });
+    const r = await fetch('https://routes.googleapis.com/distanceMatrix/v2:computeRouteMatrix', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Goog-Api-Key': key, 'X-Goog-FieldMask': 'originIndex,destinationIndex,duration,distanceMeters,condition' }, body: JSON.stringify({ origins: [wp(3.1390, 101.6869)], destinations: [wp(3.0738, 101.6079)], travelMode: 'DRIVE' }) });
+    const j = await r.json().catch(() => ({}));
+    const first = Array.isArray(j) ? j[0] : null;
+    rows.push(line('Routes API', r.ok && first, r.ok && first ? `KLCC → Sunway: ${((first.distanceMeters || 0) / 1000).toFixed(1)} km` : `HTTP ${r.status}: ${(Array.isArray(j) ? j[0]?.error?.message : j.error?.message) || 'unknown error'}`));
+  } catch (e) { rows.push(line('Routes API', false, e.message)); }
+  rows.push(line('Maps JavaScript API', mapsReady, mapsReady ? 'loaded' : (lastError || 'not loaded yet (save the key, then reopen Settings)')));
+  if (lastError && mapsReady) rows.push(line('Last widget error', false, lastError));
+  out.innerHTML = rows.join('');
+}
+
 function renderKeyBanner() { $('#keyBanner').classList.toggle('hidden', !!settings.apiKey); }
 
 // ---------- compare ----------
