@@ -87,26 +87,42 @@ function chargeMinutes(socA, socB, type, chargerKw) {
 }
 
 /** Full cost model for one station. */
-function evaluate(st, km, driveMin) {
+/** If any charger in the comparison is Gentari, the session is one RM30 credit: RM30 worth of kWh at the first Gentari's rate.
+ *  Every charger is then compared on putting that same energy into the pack. Otherwise charge to the target %. */
+function sessionPlan(slots) {
+  const g = slots.find(s => s.gentari && Number(s.rate) > 0);
+  if (!g) return { mode: 'target' };
+  const loss = (g.type === 'AC' ? settings.acLoss : settings.dcLoss) / 100;
+  const billedKwh = settings.gentariCredit / Number(g.rate);
+  return { mode: 'credit', gentari: g, billedKwh, packKwh: billedKwh * (1 - loss) };
+}
+
+function evaluate(st, km, driveMin, plan = { mode: 'target' }) {
   const driveKwh = km * settings.whPerKm / 1000;
   const socArrive = state.socNow - driveKwh / settings.usableKwh * 100;
   const loss = (st.type === 'AC' ? settings.acLoss : settings.dcLoss) / 100;
-  const packKwh = Math.max(0, (state.socTarget - socArrive) / 100 * settings.usableKwh);
+  const roomKwh = Math.max(0, (100 - socArrive) / 100 * settings.usableKwh);
+  const packKwh = plan.mode === 'credit'
+    ? Math.min(plan.packKwh, roomKwh)
+    : Math.max(0, (state.socTarget - socArrive) / 100 * settings.usableKwh);
+  const socEnd = socArrive + packKwh / settings.usableKwh * 100;
   const billedKwh = packKwh / (1 - loss);
   const rate = Number(st.rate) || 0;
-  const gFactor = st.gentari ? (settings.gentariPay / settings.gentariCredit) : 1;
-  const effRate = rate * gFactor;
+  const creditSession = plan.mode === 'credit' && st.gentari;
   const listedCost = billedKwh * rate;
-  const chargeCost = billedKwh * effRate;
+  // Gentari in a credit session: one top-up, fixed price, regardless of kWh. Otherwise pay the listed rate.
+  const chargeCost = creditSession ? settings.gentariPay : billedKwh * rate;
+  const effRate = billedKwh > 0 ? chargeCost / billedKwh : 0;
+  const gFactor = creditSession ? settings.gentariPay / settings.gentariCredit : 1;
   const detourKwhBilled = driveKwh / (1 - loss);
   const detourEnergyCost = detourKwhBilled * effRate;
-  const chargeMin = chargeMinutes(Math.max(socArrive, 0), state.socTarget, st.type, Number(st.kw) || 1);
+  const chargeMin = chargeMinutes(Math.max(socArrive, 0), socEnd, st.type, Number(st.kw) || 1);
   const parkingRate = Number(st.parking) || 0;
   const parkingCost = st.parkingUnit === 'hour' ? Math.ceil(chargeMin / 60) * parkingRate : parkingRate;
   const wearCost = km * settings.wearPerKm;
   const totalMin = driveMin + chargeMin;
   const total = chargeCost + parkingCost + wearCost;
-  return { km, driveMin, driveKwh, socArrive, packKwh, billedKwh, rate, effRate, gFactor, listedCost, chargeCost,
+  return { km, driveMin, driveKwh, socArrive, socEnd, packKwh, billedKwh, rate, effRate, gFactor, listedCost, chargeCost, creditSession,
            detourEnergyCost, chargeMin, parkingCost, parkingRate, wearCost, totalMin, total };
 }
 
@@ -213,8 +229,14 @@ function bindSoc() {
   renderBatteryHint();
 }
 function renderBatteryHint() {
-  const kwh = Math.max(0, (state.socTarget - state.socNow) / 100 * settings.usableKwh);
   const rangeNow = state.socNow / 100 * settings.usableKwh / (settings.whPerKm / 1000);
+  const plan = sessionPlan(state.slots);
+  if (plan.mode === 'credit') {
+    const endSoc = Math.min(100, state.socNow + plan.packKwh / settings.usableKwh * 100);
+    $('#batteryHint').textContent = `A Gentari charger is in the comparison, so the session is one RM ${num(settings.gentariCredit, 0)} credit: about ${num(plan.billedKwh, 1)} kWh, taking you to roughly ${Math.round(endSoc)}%. The target % is ignored. Roughly ${Math.round(rangeNow)} km of range right now.`;
+    return;
+  }
+  const kwh = Math.max(0, (state.socTarget - state.socNow) / 100 * settings.usableKwh);
   $('#batteryHint').textContent = state.socTarget <= state.socNow
     ? 'Target is not above current charge.'
     : `About ${num(kwh, 1)} kWh into the pack, plus whatever you burn getting there. Roughly ${Math.round(rangeNow)} km of range right now.`;
@@ -280,7 +302,7 @@ function renderSlots() {
       }
       persist(); renderSlots();
     });
-    const bind = (sel, key, transform = v => v) => $(sel, node).addEventListener('input', e => { slot[key] = transform(e.target.type === 'checkbox' ? e.target.checked : e.target.value); persist(); renderSlotSummary(node, slot); });
+    const bind = (sel, key, transform = v => v) => $(sel, node).addEventListener('input', e => { slot[key] = transform(e.target.type === 'checkbox' ? e.target.checked : e.target.value); persist(); renderSlotSummary(node, slot); renderBatteryHint(); });
     bind('.slot-name', 'name'); bind('.slot-address', 'address'); bind('.slot-rate', 'rate'); bind('.slot-type', 'type'); bind('.slot-kw', 'kw'); bind('.slot-gentari', 'gentari');
     bind('.slot-km', 'manualKm'); bind('.slot-min', 'manualMin'); bind('.slot-parking', 'parking'); bind('.slot-parking-unit', 'parkingUnit');
     $('.slot-address', node).addEventListener('input', () => { slot.lat = null; slot.lng = null; });
@@ -297,6 +319,7 @@ function renderSlots() {
     }
   });
   $('#btnAddSlot').disabled = state.slots.length >= 4;
+  renderBatteryHint();
 }
 function renderSlotSummary(node, slot) {
   const s = $('.slot-summary', node);
@@ -437,7 +460,9 @@ async function compare() {
   const btn = $('#btnCompare');
   const out = $('#results');
   const problems = [];
-  if (state.socTarget <= state.socNow) problems.push('Target charge must be above current charge.');
+  const plan = sessionPlan(state.slots);
+  if (plan.mode === 'target' && state.socTarget <= state.socNow) problems.push('Target charge must be above current charge.');
+  if (plan.mode === 'credit' && state.socNow >= 99) problems.push('Battery is already full.');
   state.slots.forEach((s, i) => {
     const label = s.name || `Charger ${i + 1}`;
     if (!(Number(s.rate) >= 0) || s.rate === '') problems.push(`${label}: enter RM/kWh.`);
@@ -467,9 +492,9 @@ async function compare() {
         src = 'manual distance';
       } else if (routed[i]) { km = routed[i].km; min = routed[i].min; src = 'Google routing, live traffic'; }
       else { return { slot: s, error: 'No driving route found.' }; }
-      return { slot: s, src, ev: evaluate(s, km, min) };
+      return { slot: s, src, ev: evaluate(s, km, min, plan) };
     });
-    renderResults(rows);
+    renderResults(rows, plan);
   } catch (e) {
     out.classList.remove('hidden');
     out.innerHTML = `<div class="verdict bad"><div class="eyebrow">Error</div><div class="headline">Could not compare</div><div class="sub">${esc(e.message)}</div></div>`;
@@ -477,7 +502,7 @@ async function compare() {
   scrollToResults();
 }
 
-function renderResults(rows) {
+function renderResults(rows, plan = { mode: 'target' }) {
   const out = $('#results');
   const nameOf = (r) => r.slot.name || 'Charger ' + (state.slots.indexOf(r.slot) + 1);
   const ok = rows.filter(r => r.ev && r.ev.socArrive >= 0);
@@ -503,7 +528,8 @@ function renderResults(rows) {
       <div class="eyebrow">Cheapest</div>
       <div class="headline">${esc(nameOf(best))}</div>
       ${runner ? `<div class="saving"><span class="amt">${rm(diff)}</span><span class="vs">cheaper than ${esc(nameOf(runner))}, charging + parking + wear</span></div>` : ''}
-      <div class="sub">${timeLine} Arrive at about ${Math.round(best.ev.socArrive)}%, charge about ${Math.round(best.ev.chargeMin)} min to ${state.socTarget}%.${fastest !== best && runner ? ` Quickest option: ${esc(nameOf(fastest))}.` : ''}</div>
+      <div class="sub">${timeLine} Arrive at about ${Math.round(best.ev.socArrive)}%, charge about ${Math.round(best.ev.chargeMin)} min to ${Math.round(best.ev.socEnd)}%.${fastest !== best && runner ? ` Quickest option: ${esc(nameOf(fastest))}.` : ''}</div>
+      ${plan.mode === 'credit' ? `<div class="sub plan">Session fixed by the Gentari credit: RM ${num(settings.gentariCredit, 0)} buys ${num(plan.billedKwh, 1)} kWh at ${esc(plan.gentari.name || 'Gentari')} for RM ${num(settings.gentariPay, 0)}. Every charger is compared on adding the same ${num(plan.packKwh, 1)} kWh to the pack.</div>` : ''}
     </div>`;
   } else {
     html += `<div class="verdict bad"><div class="eyebrow">Cheapest</div><div class="headline">None reachable</div><div class="sub">You would not make it to any of these on the current charge.</div></div>`;
@@ -519,8 +545,8 @@ function renderResults(rows) {
   const rowsHtml = [
     ['Drive', (e) => `${num(e.km, 1)} km<span class="sub">${Math.round(e.driveMin)} min · ${num(e.driveKwh, 1)} kWh</span>`],
     ['Arrive at', (e) => e.socArrive < 0 ? `Out of charge<span class="sub">short by ${Math.round(-e.socArrive)}%</span>` : `${Math.round(e.socArrive)}%${e.socArrive < 8 ? '<span class="sub">tight</span>' : ''}`],
-    ['Charge', (e, r) => `${num(e.billedKwh, 1)} kWh<span class="sub">${Math.round(e.chargeMin)} min · ${esc(r.slot.type)} ${esc(r.slot.kw)} kW</span>`],
-    ['Charging cost', (e, r) => `${rm(e.chargeCost)}<span class="sub">${r.slot.gentari ? `RM ${num(e.effRate, 3)}/kWh after credit` : `RM ${num(e.rate, 2)}/kWh`}</span>`],
+    ['Charge', (e, r) => `${num(e.billedKwh, 1)} kWh<span class="sub">${Math.round(e.chargeMin)} min · ${esc(r.slot.type)} ${esc(r.slot.kw)} kW · to ${Math.round(e.socEnd)}%</span>`],
+    ['Charging cost', (e, r) => `${rm(e.chargeCost)}<span class="sub">${e.creditSession ? `one RM ${num(settings.gentariCredit, 0)} credit · RM ${num(e.effRate, 3)}/kWh` : `RM ${num(e.rate, 2)}/kWh`}</span>`],
     ['Parking', (e, r) => `${rm(e.parkingCost)}<span class="sub">${e.parkingRate ? (r.slot.parkingUnit === 'hour' ? `RM ${num(e.parkingRate, 2)}/h × ${Math.ceil(e.chargeMin / 60)} h` : 'flat') : 'none'}</span>`],
     ['Wear', (e) => `${rm(e.wearCost)}<span class="sub">RM ${settings.wearPerKm}/km</span>`],
   ];

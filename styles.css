@@ -274,3 +274,5 @@ gmp-place-autocomplete { color-scheme: dark; --gmp-mat-color-surface: var(--surf
 .keyrow { flex-wrap: nowrap; align-items: stretch; margin-top: 0; }
 .keyrow input { flex: 1; min-width: 0; font-size: 14px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
 .keyrow .btn { flex: none; }
+
+.verdict .sub.plan { color: var(--text-3); font-size: 13px; }
