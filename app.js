@@ -374,7 +374,7 @@ function bindSettings() {
     const oldKey = settings.apiKey;
     for (const [k, id] of Object.entries(SETTING_FIELDS)) {
       const v = $('#' + id).value;
-      settings[k] = k === 'apiKey' ? v.trim() : (v === '' ? DEFAULTS[k] : Number(v));
+      settings[k] = k === 'apiKey' ? cleanKey(v) : (v === '' ? DEFAULTS[k] : Number(v));
     }
     if (settings.gentariCredit <= 0) settings.gentariCredit = DEFAULTS.gentariCredit;
     save(LS.settings, settings);
@@ -383,21 +383,26 @@ function bindSettings() {
   });
   renderKeyBanner();
 }
+function cleanKey(v) { return String(v || '').replace(/[^A-Za-z0-9_-]/g, ''); }
+function oddChars(v) { return [...String(v || '')].filter(c => !/[A-Za-z0-9_-]/.test(c)).map(c => 'U+' + c.codePointAt(0).toString(16).toUpperCase().padStart(4, '0')); }
+
 async function runDiagnostics() {
   const out = $('#diagOut');
-  const key = $('#setApiKey').value.trim();
+  const raw = $('#setApiKey').value;
+  const key = cleanKey(raw);
+  const odd = oddChars(raw);
   const line = (label, ok, msg) => `<div class="diag ${ok ? 'ok' : 'bad'}"><b>${ok ? '✓' : '✕'} ${esc(label)}</b><span>${esc(msg)}</span></div>`;
   if (!key) { out.innerHTML = line('API key', false, 'No key entered.'); return; }
   out.innerHTML = '<div class="hint">Testing…</div>';
   const rows = [];
-  rows.push(line('Key format', /^AIza[0-9A-Za-z_-]{35}$/.test(key), key.length + ' characters' + (/\s/.test($('#setApiKey').value) ? ', contains whitespace' : '')));
+  rows.push(line('Key format', /^AIza[0-9A-Za-z_-]{35}$/.test(key) && !odd.length, odd.length ? `${raw.length} characters, ${odd.length} stray (${odd.join(' ')}). Removed for this test. Save to store the cleaned key.` : `${key.length} characters, starts ${key.slice(0, 4)}`));
   rows.push(line('This page', true, location.origin + location.pathname));
   // Places API (New) autocomplete via REST
   try {
     const r = await fetch('https://places.googleapis.com/v1/places:autocomplete', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Goog-Api-Key': key }, body: JSON.stringify({ input: 'Gentari', includedRegionCodes: ['my'] }) });
     const j = await r.json().catch(() => ({}));
     rows.push(line('Places API (New)', r.ok, r.ok ? `${(j.suggestions || []).length} suggestions for “Gentari”` : `HTTP ${r.status}: ${j.error?.message || 'unknown error'}`));
-  } catch (e) { rows.push(line('Places API (New)', false, e.message)); }
+  } catch (e) { rows.push(line('Places API (New)', false, 'Request could not be sent: ' + e.message)); }
   // Routes API
   try {
     const wp = (lat, lng) => ({ waypoint: { location: { latLng: { latitude: lat, longitude: lng } } } });
@@ -405,7 +410,7 @@ async function runDiagnostics() {
     const j = await r.json().catch(() => ({}));
     const first = Array.isArray(j) ? j[0] : null;
     rows.push(line('Routes API', r.ok && first, r.ok && first ? `KLCC → Sunway: ${((first.distanceMeters || 0) / 1000).toFixed(1)} km` : `HTTP ${r.status}: ${(Array.isArray(j) ? j[0]?.error?.message : j.error?.message) || 'unknown error'}`));
-  } catch (e) { rows.push(line('Routes API', false, e.message)); }
+  } catch (e) { rows.push(line('Routes API', false, 'Request could not be sent: ' + e.message)); }
   rows.push(line('Maps JavaScript API', mapsReady, mapsReady ? 'loaded' : (lastError || 'not loaded yet (save the key, then reopen Settings)')));
   if (lastError && mapsReady) rows.push(line('Last widget error', false, lastError));
   out.innerHTML = rows.join('');
