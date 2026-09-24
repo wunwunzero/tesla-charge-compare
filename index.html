@@ -28,6 +28,7 @@
   <symbol id="i-trash" viewBox="0 0 24 24"><path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6M10 11v6M14 11v6"/></symbol>
   <symbol id="i-bolt" viewBox="0 0 24 24"><path d="M13 2 4 14h7l-1 8 9-12h-7l1-8Z"/></symbol>
   <symbol id="i-chev" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></symbol>
+  <symbol id="i-nav" viewBox="0 0 24 24"><path d="M3 11 21 3l-8 18-2-8-8-2Z"/></symbol>
 </svg>
 
 <header class="topbar">
@@ -86,6 +87,17 @@
       <div id="destAuto" class="autocomplete-slot"></div>
       <div class="hint" id="destHint">No destination set.</div>
     </div>
+    <div class="row two" style="margin-top:14px">
+      <label>Unplug after charging
+        <span class="select"><select id="lateMin">
+          <option value="0">Right away</option><option value="10">10 min later</option><option value="15">15 min later</option>
+          <option value="20">20 min later</option><option value="30">30 min later</option><option value="45">45 min later</option><option value="60">1 hour later</option>
+        </select></span>
+      </label>
+      <label>Parking rates for
+        <span class="select"><select id="dayType"><option value="auto">Today</option><option value="weekday">Weekday</option><option value="weekend">Weekend / public holiday</option></select></span>
+      </label>
+    </div>
   </section>
 
   <!-- STATIONS -->
@@ -139,12 +151,32 @@
           <label>Charger kW <input type="number" id="favKw" step="1" min="1" required inputmode="numeric" placeholder="60"></label>
         </div>
         <div class="row two">
-          <label>Parking fee, RM <input type="number" id="favParking" step="0.5" min="0" inputmode="decimal" placeholder="0"></label>
+          <label>Parking fee, RM <input type="number" id="favParking" step="0.5" min="0" inputmode="decimal" placeholder="0 = free"></label>
           <label>Charged
-            <span class="select"><select id="favParkingUnit"><option value="flat">Flat per visit</option><option value="hour">Per hour (or part)</option></select></span>
+            <span class="select"><select id="favParkingUnit"><option value="flat">Flat per visit</option><option value="hour">Per hour (first hour)</option></select></span>
           </label>
         </div>
         <label class="check"><input type="checkbox" id="favGentari"><span>Gentari credit deal applies here</span></label>
+        <details class="more">
+        <summary>More parking and idle-fee options</summary>
+        <div class="row three">
+          <label>Later hours, RM/h <input type="number" data-k="parkingNext" step="0.5" min="0" inputmode="decimal" placeholder="same"></label>
+          <label>Free minutes <input type="number" data-k="parkingGrace" step="1" min="0" inputmode="numeric" placeholder="0"></label>
+          <label>Daily cap, RM <input type="number" data-k="parkingCap" step="1" min="0" inputmode="decimal" placeholder="none"></label>
+        </div>
+        <div class="wk-wrap">
+          <label class="check"><input type="checkbox" data-k="wkDiff"><span>Different rate at weekends and public holidays</span></label>
+          <div class="row three wk-fields hidden">
+            <label>Weekend RM <input type="number" data-k="wkParking" step="0.5" min="0" inputmode="decimal" placeholder="0"></label>
+            <label>Charged <span class="select"><select data-k="wkUnit"><option value="flat">Flat</option><option value="hour">Per hour</option></select></span></label>
+            <label>Later hours <input type="number" data-k="wkNext" step="0.5" min="0" inputmode="decimal" placeholder="same"></label>
+          </div>
+        </div>
+        <div class="row two">
+          <label>Idle fee, RM/min <input type="number" data-k="idleFee" step="0.05" min="0" inputmode="decimal" placeholder="Gentari 0.40, else 0"></label>
+          <label>Idle free minutes <input type="number" data-k="idleGrace" step="1" min="0" inputmode="numeric" placeholder="Gentari 15, else 0"></label>
+        </div>
+      </details>
         <div class="row">
           <button type="submit" class="btn primary">Save charger</button>
           <button type="button" id="favCancel" class="btn secondary hidden">Cancel</button>
@@ -169,7 +201,7 @@
     </details>
   </section>
 
-  <p class="foot"><span id="ver">v12 · 24 Sep 2026</span><br>Estimates. Consumption, charging curve and losses are approximations for a 2024 Model 3 Long Range AWD. Idle fees not included.</p>
+  <p class="foot"><span id="ver">v13 · 24 Sep 2026</span><br>Estimates. Consumption, charging curve and losses are approximations for a 2024 Model 3 Long Range AWD. Idle fees assume you unplug when you say you will.</p>
 </main>
 
 <div class="actionbar">
@@ -198,17 +230,23 @@
     <h3>Car</h3>
     <div class="row two">
       <label>Usable battery, kWh <input type="number" id="setUsableKwh" step="0.5" min="40" max="100"></label>
-      <label>Consumption, Wh/km <input type="number" id="setWhPerKm" step="1" min="100" max="300"></label>
+      <label>Minimum arrival, % <input type="number" id="setMinArrive" step="1" min="0" max="50"></label>
     </div>
+    <div class="row two">
+      <label>City use, Wh/km <input type="number" id="setWhPerKm" step="1" min="90" max="300"></label>
+      <label>Highway use, Wh/km <input type="number" id="setWhHighway" step="1" min="90" max="300"></label>
+    </div>
+    <p class="hint">Each leg is blended between the two by its average speed: 40 km/h or slower counts as city, 90 km/h or faster as highway. Chargers you'd reach below the minimum arrival % are never recommended.</p>
     <div class="row three">
       <label>AC losses, % <input type="number" id="setAcLoss" step="1" min="0" max="30"></label>
       <label>DC losses, % <input type="number" id="setDcLoss" step="1" min="0" max="30"></label>
       <label>Onboard AC, kW <input type="number" id="setOnboardAc" step="0.1" min="3" max="22"></label>
     </div>
 
-    <h3>Your car</h3>
+    <h3>Your car and phone</h3>
     <div class="row two">
       <label>Wear, RM / km <input type="number" id="setWearPerKm" step="0.01" min="0"></label>
+      <label>Navigate with <span class="select"><select id="setNavApp"><option value="google">Google Maps</option><option value="waze">Waze</option><option value="apple">Apple Maps</option></select></span></label>
     </div>
     <p class="hint">Time is not converted to money. The result shows how many extra minutes the slower option costs you.</p>
 
@@ -246,10 +284,30 @@
         <label>kW <input type="number" class="slot-kw" step="1" min="1" inputmode="numeric" placeholder="60"></label>
       </div>
       <div class="row two">
-        <label>Parking RM <input type="number" class="slot-parking" step="0.5" min="0" inputmode="decimal" placeholder="0"></label>
-        <label>Charged <span class="select"><select class="slot-parking-unit"><option value="flat">Flat per visit</option><option value="hour">Per hour</option></select></span></label>
+        <label>Parking RM <input type="number" class="slot-parking" step="0.5" min="0" inputmode="decimal" placeholder="0 = free"></label>
+        <label>Charged <span class="select"><select class="slot-parking-unit"><option value="flat">Flat per visit</option><option value="hour">Per hour (first hour)</option></select></span></label>
       </div>
       <label class="check"><input type="checkbox" class="slot-gentari"><span>Gentari credit deal</span></label>
+      <details class="more">
+        <summary>More parking and idle-fee options</summary>
+        <div class="row three">
+          <label>Later hours, RM/h <input type="number" data-k="parkingNext" step="0.5" min="0" inputmode="decimal" placeholder="same"></label>
+          <label>Free minutes <input type="number" data-k="parkingGrace" step="1" min="0" inputmode="numeric" placeholder="0"></label>
+          <label>Daily cap, RM <input type="number" data-k="parkingCap" step="1" min="0" inputmode="decimal" placeholder="none"></label>
+        </div>
+        <div class="wk-wrap">
+          <label class="check"><input type="checkbox" data-k="wkDiff"><span>Different rate at weekends and public holidays</span></label>
+          <div class="row three wk-fields hidden">
+            <label>Weekend RM <input type="number" data-k="wkParking" step="0.5" min="0" inputmode="decimal" placeholder="0"></label>
+            <label>Charged <span class="select"><select data-k="wkUnit"><option value="flat">Flat</option><option value="hour">Per hour</option></select></span></label>
+            <label>Later hours <input type="number" data-k="wkNext" step="0.5" min="0" inputmode="decimal" placeholder="same"></label>
+          </div>
+        </div>
+        <div class="row two">
+          <label>Idle fee, RM/min <input type="number" data-k="idleFee" step="0.05" min="0" inputmode="decimal" placeholder="Gentari 0.40, else 0"></label>
+          <label>Idle free minutes <input type="number" data-k="idleGrace" step="1" min="0" inputmode="numeric" placeholder="Gentari 15, else 0"></label>
+        </div>
+      </details>
     </div>
     <div class="slot-summary"></div>
     <details class="manual">
