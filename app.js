@@ -67,7 +67,7 @@ let mapsLoading = null;
 let lastError = '';
 
 function emptySlot() {
-  return { favId: '', name: '', address: '', lat: null, lng: null, rate: '', type: 'DC', kw: '', gentari: false, parking: '', parkingUnit: 'flat', manualKm: '', manualMin: '' };
+  return { favId: '', name: '', address: '', lat: null, lng: null, rate: '', type: 'DC', kw: '', gentari: false, parking: '', parkingUnit: 'flat', manualKm: '', manualMin: '', manualToKm: '' };
 }
 function load(k, fallback) { try { const v = JSON.parse(localStorage.getItem(k)); return v ?? fallback; } catch { return fallback; } }
 function save(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} }
@@ -113,11 +113,14 @@ function chargeMinutes(socA, socB, type, chargerKw) {
 /** If any charger in the comparison is Gentari, the session is one RM30 credit: RM30 worth of kWh at the first Gentari's rate.
  *  Every charger is then compared on putting that same energy into the pack. Otherwise charge to the target %. */
 function sessionPlan(slots) {
-  const g = slots.find(s => s.gentari && Number(s.rate) > 0);
-  if (!g) return { mode: 'target' };
+  // Reference energy = what one credit buys at the cheapest Gentari in the comparison.
+  // Every charger, including pricier Gentari sites, is compared on putting that same energy into the pack.
+  const gs = slots.filter(s => s.gentari && Number(s.rate) > 0);
+  if (!gs.length) return { mode: 'target' };
+  const g = gs.reduce((a, b) => Number(a.rate) <= Number(b.rate) ? a : b);
   const loss = (g.type === 'AC' ? settings.acLoss : settings.dcLoss) / 100;
   const billedKwh = settings.gentariCredit / Number(g.rate);
-  return { mode: 'credit', gentari: g, billedKwh, packKwh: billedKwh * (1 - loss) };
+  return { mode: 'credit', gentari: g, billedKwh, packKwh: billedKwh * (1 - loss), mixed: new Set(gs.map(x => Number(x.rate))).size > 1 };
 }
 
 function evaluate(st, legs, plan = { mode: 'target' }) {
@@ -134,8 +137,11 @@ function evaluate(st, legs, plan = { mode: 'target' }) {
   const rate = Number(st.rate) || 0;
   const creditSession = plan.mode === 'credit' && st.gentari;
   const listedCost = billedKwh * rate;
-  // Gentari in a credit session: one top-up, fixed price, regardless of kWh. Otherwise pay the listed rate.
-  const chargeCost = creditSession ? settings.gentariPay : billedKwh * rate;
+  // Gentari in a credit session: one top-up buys credit / rate kWh at THIS site. If that falls short of the
+  // reference energy (a pricier Gentari), the shortfall is priced at this site's normal rate so energy stays equal.
+  const creditKwh = creditSession && rate > 0 ? settings.gentariCredit / rate : 0;
+  const topUpKwh = creditSession ? Math.max(0, billedKwh - creditKwh) : 0;
+  const chargeCost = creditSession ? settings.gentariPay + topUpKwh * rate : billedKwh * rate;
   const effRate = billedKwh > 0 ? chargeCost / billedKwh : 0;
   const gFactor = creditSession ? settings.gentariPay / settings.gentariCredit : 1;
   const detourKwhBilled = driveKwh / (1 - loss);
@@ -147,7 +153,7 @@ function evaluate(st, legs, plan = { mode: 'target' }) {
   const totalMin = driveMin + chargeMin;
   const total = chargeCost + parkingCost + wearCost;
   const socAfter = socEnd - legs.afterKm * settings.whPerKm / 1000 / settings.usableKwh * 100; // at destination / back home
-  return { km, driveMin, driveKwh, socArrive, socEnd, socAfter, packKwh, billedKwh, rate, effRate, gFactor, listedCost, chargeCost, creditSession,
+  return { km, driveMin, driveKwh, socArrive, socEnd, socAfter, packKwh, billedKwh, rate, effRate, gFactor, listedCost, chargeCost, creditSession, creditKwh, topUpKwh,
            detourEnergyCost, chargeMin, parkingCost, parkingRate, wearCost, totalMin, total, legs };
 }
 
@@ -246,7 +252,7 @@ async function legsFor(stations, opts = {}) {
   const est = (a, b) => { const km = haversineKm(a, b) * 1.3; return { km, min: km / 40 * 60 }; };
   const pinned = stations.filter(st => st.lat != null);
   let oc = stations.map(() => null), co = stations.map(() => null), cd = stations.map(() => null), od = null;
-  const live = !!settings.apiKey && !!origin;
+  const live = opts.live !== false && !!settings.apiKey && !!origin;
   if (live && pinned.length) {
     const rows = await matrix([origin], pinned);
     pinned.forEach((st, k) => { oc[stations.indexOf(st)] = rows[0][k]; });
@@ -268,7 +274,15 @@ async function legsFor(stations, opts = {}) {
       return { toKm: to.km, toMin: to.min, extraKm: to.km + back.km, extraMin: to.min + back.min, afterKm: back.km, routed: routed && !!co[i], src: routed ? 'Google routing' : manual ? 'manual (doubled)' : 'estimated' };
     }
     // detour: origin -> charger -> destination, minus going direct
-    if (manual && !oc[i]) return { toKm: to.km, toMin: to.min, extraKm: to.km, extraMin: to.min, afterKm: 0, routed: false, src: 'manual extra km' };
+    if (manual && !oc[i]) {
+      // Manual value is the EXTRA distance. Arrival battery needs the distance TO the charger:
+      // use the typed value, else a straight-line estimate, else fall back to the extra km and say so.
+      const typedTo = st.manualToKm !== '' && st.manualToKm != null ? Number(st.manualToKm) : null;
+      const estTo = origin && st.lat != null ? est(origin, st).km : null;
+      const toKm = typedTo ?? estTo ?? to.km;
+      const toSrc = typedTo != null ? '' : estTo != null ? ', km to charger estimated' : ', km to charger unknown (using extra km)';
+      return { toKm, toMin: to.min, extraKm: to.km, extraMin: to.min, afterKm: 0, routed: false, src: 'manual extra km' + toSrc };
+    }
     if (!dest) return null;
     const toDest = cd[i] || (st.lat != null ? est(st, dest) : null);
     const direct = od || (origin ? est(origin, dest) : null);
@@ -323,11 +337,10 @@ function renderTrip() {
   const d = $('#destHint');
   if (state.destination) d.innerHTML = `Going to <b>${esc(state.destination.label)}</b> <button class="link-btn" id="clearDest">clear</button>`; else d.textContent = 'No destination set.';
   $('#clearDest')?.addEventListener('click', () => { state.destination = null; persist(); renderTrip(); });
-  $$('.slot .manual .row label').forEach((l, i) => {
-    const isKm = i % 2 === 0;
-    const txt = state.tripMode === 'detour' ? (isKm ? 'Extra km via charger' : 'Extra min') : state.tripMode === 'round' ? (isKm ? 'Km to charger (one way)' : 'Min (one way)') : (isKm ? 'Driving km' : 'Driving min');
-    l.firstChild.textContent = txt + ' ';
-  });
+  const L = { oneway: ['Driving km', 'Driving min'], round: ['Km to charger (one way)', 'Min (one way)'], detour: ['Extra km via charger', 'Extra min'] }[state.tripMode];
+  $$('.slot .slot-km').forEach(i => { i.closest('label').firstChild.textContent = L[0] + ' '; });
+  $$('.slot .slot-min').forEach(i => { i.closest('label').firstChild.textContent = L[1] + ' '; });
+  $$('.slot .tokm-row').forEach(r => r.classList.toggle('hidden', state.tripMode !== 'detour'));
 }
 function bindTrip() {
   $$('#tripMode button').forEach(b => b.addEventListener('click', () => { state.tripMode = b.dataset.mode; persist(); renderTrip(); renderBatteryHint(); }));
@@ -378,6 +391,7 @@ function renderSlots() {
     $('.slot-parking-unit', node).value = slot.parkingUnit || 'flat';
     $('.slot-km', node).value = slot.manualKm;
     $('.slot-min', node).value = slot.manualMin;
+    $('.slot-tokm', node).value = slot.manualToKm ?? '';
     $('.slot-remove', node).classList.toggle('hidden', state.slots.length <= 2);
     renderSlotSummary(node, slot);
 
@@ -391,7 +405,7 @@ function renderSlots() {
     });
     const bind = (sel, key, transform = v => v) => $(sel, node).addEventListener('input', e => { slot[key] = transform(e.target.type === 'checkbox' ? e.target.checked : e.target.value); persist(); renderSlotSummary(node, slot); renderBatteryHint(); });
     bind('.slot-name', 'name'); bind('.slot-address', 'address'); bind('.slot-rate', 'rate'); bind('.slot-type', 'type'); bind('.slot-kw', 'kw'); bind('.slot-gentari', 'gentari');
-    bind('.slot-km', 'manualKm'); bind('.slot-min', 'manualMin'); bind('.slot-parking', 'parking'); bind('.slot-parking-unit', 'parkingUnit');
+    bind('.slot-km', 'manualKm'); bind('.slot-min', 'manualMin'); bind('.slot-tokm', 'manualToKm'); bind('.slot-parking', 'parking'); bind('.slot-parking-unit', 'parkingUnit');
     $('.slot-address', node).addEventListener('input', () => { slot.lat = null; slot.lng = null; });
     $('.slot-remove', node).addEventListener('click', () => { state.slots.splice(idx, 1); persist(); renderSlots(); });
     if (slot.manualKm !== '' && slot.manualKm != null) $('.manual', node).open = true;
@@ -605,7 +619,7 @@ function renderResults(rows, plan = { mode: 'target' }) {
       ${runner ? `<div class="saving"><span class="amt">${rm(diff)}</span><span class="vs">cheaper than ${esc(nameOf(runner))}, charging + parking + wear</span></div>` : ''}
       <div class="sub">${timeLine} Arrive at about ${Math.round(best.ev.socArrive)}%, charge about ${Math.round(best.ev.chargeMin)} min to ${Math.round(best.ev.socEnd)}%.${fastest !== best && runner ? ` Quickest option: ${esc(nameOf(fastest))}.` : ''}</div>
       <div class="logrow"><span class="lbl">Going with one of these? Log it, then fill in the receipt later.</span>${ok.map(r => `<button type="button" class="btn secondary small" data-log="${state.slots.indexOf(r.slot)}">Log ${esc(nameOf(r))}</button>`).join('')}</div>
-      ${plan.mode === 'credit' ? `<div class="sub plan">Session fixed by the Gentari credit: RM ${num(settings.gentariCredit, 0)} buys ${num(plan.billedKwh, 1)} kWh at ${esc(plan.gentari.name || 'Gentari')} for RM ${num(settings.gentariPay, 0)}. Every charger is compared on adding the same ${num(plan.packKwh, 1)} kWh to the pack.</div>` : ''}
+      ${plan.mode === 'credit' ? `<div class="sub plan">Session fixed by the Gentari credit: RM ${num(settings.gentariCredit, 0)} buys ${num(plan.billedKwh, 1)} kWh at ${esc(plan.gentari.name || 'Gentari')} for RM ${num(settings.gentariPay, 0)}. Every charger is compared on adding the same ${num(plan.packKwh, 1)} kWh to the pack.${plan.mixed ? ' Gentari sites with a higher rate get less from the credit, so their shortfall is priced at their normal rate.' : ''}</div>` : ''}
     </div>`;
   } else {
     html += `<div class="verdict bad"><div class="eyebrow">Cheapest</div><div class="headline">None reachable</div><div class="sub">You would not make it to any of these on the current charge.</div></div>`;
@@ -622,7 +636,7 @@ function renderResults(rows, plan = { mode: 'target' }) {
     [state.tripMode === 'oneway' ? 'Drive' : state.tripMode === 'round' ? 'Drive there and back' : 'Extra driving', (e) => `${num(e.km, 1)} km<span class="sub">${Math.round(e.driveMin)} min${state.tripMode !== 'oneway' ? ` · ${num(e.legs.toKm, 1)} km to charger` : ` · ${num(e.driveKwh, 1)} kWh`}</span>`],
     ['Arrive at', (e) => e.socArrive < 0 ? `Out of charge<span class="sub">short by ${Math.round(-e.socArrive)}%</span>` : `${Math.round(e.socArrive)}%${e.socArrive < 8 ? '<span class="sub">tight</span>' : ''}`],
     ['Charge', (e, r) => `${num(e.billedKwh, 1)} kWh<span class="sub">${Math.round(e.chargeMin)} min · ${esc(r.slot.type)} ${esc(r.slot.kw)} kW · to ${Math.round(e.socEnd)}%</span>`],
-    ['Charging cost', (e, r) => `${rm(e.chargeCost)}<span class="sub">${e.creditSession ? `one RM ${num(settings.gentariCredit, 0)} credit · RM ${num(e.effRate, 3)}/kWh` : `RM ${num(e.rate, 2)}/kWh`}</span>`],
+    ['Charging cost', (e, r) => `${rm(e.chargeCost)}<span class="sub">${e.creditSession ? (e.topUpKwh > 0.05 ? `RM ${num(settings.gentariCredit, 0)} credit buys ${num(e.creditKwh, 1)} kWh here, + ${num(e.topUpKwh, 1)} kWh at RM ${num(e.rate, 2)} to match` : `one RM ${num(settings.gentariCredit, 0)} credit · RM ${num(e.effRate, 3)}/kWh`) : `RM ${num(e.rate, 2)}/kWh`}</span>`],
     ['Parking', (e, r) => `${rm(e.parkingCost)}<span class="sub">${e.parkingRate ? (r.slot.parkingUnit === 'hour' ? `RM ${num(e.parkingRate, 2)}/h × ${Math.ceil(e.chargeMin / 60)} h` : 'flat') : 'none'}</span>`],
     ['Wear', (e) => `${rm(e.wearCost)}<span class="sub">RM ${settings.wearPerKm}/km</span>`],
   ];
@@ -725,7 +739,7 @@ async function findNearby() {
       .sort((a, b) => a.airKm - b.airKm).slice(0, 15);
     if (!cands.length) { out.innerHTML = `<div class="hint" style="margin-top:10px">Nothing within ${radius} km. Widen the radius or save a charger with a pinned location.</div>`; return; }
     let legs;
-    try { legs = await legsFor(cands); } catch (e) { notes.push(e.message); legs = await legsFor(cands, {}).catch(() => cands.map(() => null)); }
+    try { legs = await legsFor(cands); } catch (e) { notes.push(e.message + ' Showing straight-line estimates instead.'); legs = await legsFor(cands, { live: false }); }
     if (state.tripMode === 'detour' && !state.destination) notes.push('No destination set, so extra driving is measured one way to the charger.');
     const plan = sessionPlan(cands);
     const rows = cands.map((c, i) => legs[i] ? { cand: c, ev: evaluate(c, legs[i], plan), routed: legs[i].routed } : null)
@@ -761,7 +775,11 @@ function renderNearby(rows, plan, notes, radius) {
     const picks = rows.slice(0, 2).map(r => {
       const c = r.cand; const slot = emptySlot();
       Object.assign(slot, { favId: c.favId || '', name: c.name, address: c.address, lat: c.lat, lng: c.lng, rate: c.rate, type: c.type, kw: c.kw, gentari: !!c.gentari, parking: c.parking ?? '', parkingUnit: c.parkingUnit || 'flat' });
-      if (!r.routed) { slot.manualKm = num(r.ev.legs.toKm, 1); slot.manualMin = String(Math.round(r.ev.legs.toMin)); }
+      if (!r.routed) {
+        const L = r.ev.legs;
+        if (state.tripMode === 'detour') { slot.manualKm = num(L.extraKm, 1); slot.manualMin = String(Math.round(L.extraMin)); slot.manualToKm = num(L.toKm, 1); }
+        else { slot.manualKm = num(L.toKm, 1); slot.manualMin = String(Math.round(L.toMin)); }
+      }
       return slot;
     });
     while (picks.length < 2) picks.push(emptySlot());

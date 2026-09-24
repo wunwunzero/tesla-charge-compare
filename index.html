@@ -169,7 +169,7 @@
     </details>
   </section>
 
-  <p class="foot"><span id="ver">v11 · 20 Sep 2026</span><br>Estimates. Consumption, charging curve and losses are approximations for a 2024 Model 3 Long Range AWD. Idle fees not included.</p>
+  <p class="foot"><span id="ver">v12 · 24 Sep 2026</span><br>Estimates. Consumption, charging curve and losses are approximations for a 2024 Model 3 Long Range AWD. Idle fees not included.</p>
 </main>
 
 <div class="actionbar">
@@ -257,6 +257,9 @@
       <div class="row two">
         <label>Driving km <input type="number" class="slot-km" step="0.1" min="0" inputmode="decimal"></label>
         <label>Driving min <input type="number" class="slot-min" step="1" min="0" inputmode="numeric"></label>
+      </div>
+      <div class="row tokm-row hidden">
+        <label>Km from here to the charger <input type="number" class="slot-tokm" step="0.1" min="0" inputmode="decimal" placeholder="for arrival battery %"></label>
       </div>
       <div class="hint">Used when set, otherwise Google routing fills this in.</div>
     </details>
