@@ -73,7 +73,7 @@ let mapsLoading = null;
 let lastError = '';
 
 // Optional per-charger fields beyond the basics (parking tiers, weekend rates, idle fee)
-const EXTRA_KEYS = ['parkingNext', 'parkingGrace', 'parkingCap', 'wkDiff', 'wkParking', 'wkUnit', 'wkNext', 'idleFee', 'idleGrace'];
+const EXTRA_KEYS = ['parkingFirstHours', 'parkingNext', 'parkingGrace', 'parkingCap', 'wkDiff', 'wkParking', 'wkUnit', 'wkNext', 'idleFee', 'idleGrace'];
 const pickExtras = (f) => Object.fromEntries(EXTRA_KEYS.map(k => [k, f[k] ?? (k === 'wkDiff' ? false : k === 'wkUnit' ? 'flat' : '')]));
 function emptySlot() {
   return { favId: '', name: '', address: '', lat: null, lng: null, rate: '', type: 'DC', kw: '', gentari: false, parking: '', parkingUnit: 'flat', manualKm: '', manualMin: '', manualToKm: '' };
@@ -138,14 +138,15 @@ function parkingFor(st, minutes) {
   const nextRaw = wk ? st.wkNext : st.parkingNext;
   const next = nextRaw === '' || nextRaw == null ? first : Number(nextRaw) || 0;
   const grace = Number(st.parkingGrace) || 0, cap = Number(st.parkingCap) || 0;
+  const block = Math.max(1, Number(st.parkingFirstHours) || 1); // hours covered by the first rate
   let cost = 0, hours = 0;
   if ((first > 0 || next > 0) && minutes > grace) {
     if (unit === 'flat') cost = first;
-    else { hours = Math.max(1, Math.ceil(minutes / 60)); cost = first + (hours - 1) * next; }
+    else { hours = Math.max(1, Math.ceil(minutes / 60)); cost = first + Math.max(0, hours - block) * next; }
   }
   const capped = cap > 0 && cost > cap;
   if (capped) cost = cap;
-  return { cost, hours, weekend: wk, first, next, unit, grace, capped, free: first === 0 && next === 0 };
+  return { cost, hours, block, weekend: wk, first, next, unit, grace, capped, free: first === 0 && next === 0 };
 }
 /** Idle fee for staying plugged in after charging stops. Blank fields fall back to Gentari's RM0.40/min after 15 min. */
 function idleFor(st) {
@@ -492,7 +493,9 @@ function syncWk(root) { $$('.wk-fields', root).forEach(w => { const c = $('[data
 function parkingText(st) {
   const p = Number(st.parking) || 0, next = st.parkingNext === '' || st.parkingNext == null ? null : Number(st.parkingNext);
   if (!p && !next) return st.wkDiff && Number(st.wkParking) ? `free weekdays, RM ${num(st.wkParking, 2)}${st.wkUnit === 'hour' ? '/h' : ''} weekends` : '';
-  let t = st.parkingUnit === 'hour' ? (next != null && next !== p ? `RM ${num(p, 2)} first hour, then RM ${num(next, 2)}/h` : `RM ${num(p, 2)}/h`) : `RM ${num(p, 2)} flat`;
+  const blk = Math.max(1, Number(st.parkingFirstHours) || 1);
+  const firstLbl = blk > 1 ? `first ${blk} h` : 'first hour';
+  let t = st.parkingUnit === 'hour' ? ((next != null && next !== p) || blk > 1 ? `RM ${num(p, 2)} ${firstLbl}, then RM ${num(next ?? p, 2)}/h` : `RM ${num(p, 2)}/h`) : `RM ${num(p, 2)} flat`;
   if (st.wkDiff) t += `; weekends RM ${num(st.wkParking || 0, 2)}${st.wkUnit === 'hour' ? '/h' : ' flat'}`;
   return 'parking ' + t;
 }

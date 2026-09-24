@@ -153,14 +153,17 @@
         <div class="row two">
           <label>Parking fee, RM <input type="number" id="favParking" step="0.5" min="0" inputmode="decimal" placeholder="0 = free"></label>
           <label>Charged
-            <span class="select"><select id="favParkingUnit"><option value="flat">Flat per visit</option><option value="hour">Per hour (first hour)</option></select></span>
+            <span class="select"><select id="favParkingUnit"><option value="flat">Flat per visit</option><option value="hour">Per hour</option></select></span>
           </label>
         </div>
         <label class="check"><input type="checkbox" id="favGentari"><span>Gentari credit deal applies here</span></label>
         <details class="more">
         <summary>More parking and idle-fee options</summary>
-        <div class="row three">
-          <label>Later hours, RM/h <input type="number" data-k="parkingNext" step="0.5" min="0" inputmode="decimal" placeholder="same"></label>
+        <div class="row two">
+          <label>First rate covers, hours <input type="number" data-k="parkingFirstHours" step="1" min="1" inputmode="numeric" placeholder="1"></label>
+          <label>Then per hour, RM <input type="number" data-k="parkingNext" step="0.5" min="0" inputmode="decimal" placeholder="same"></label>
+        </div>
+        <div class="row two">
           <label>Free minutes <input type="number" data-k="parkingGrace" step="1" min="0" inputmode="numeric" placeholder="0"></label>
           <label>Daily cap, RM <input type="number" data-k="parkingCap" step="1" min="0" inputmode="decimal" placeholder="none"></label>
         </div>
@@ -201,7 +204,7 @@
     </details>
   </section>
 
-  <p class="foot"><span id="ver">v13 · 24 Sep 2026</span><br>Estimates. Consumption, charging curve and losses are approximations for a 2024 Model 3 Long Range AWD. Idle fees assume you unplug when you say you will.</p>
+  <p class="foot"><span id="ver">v14 · 24 Sep 2026</span><br>Estimates. Consumption, charging curve and losses are approximations for a 2024 Model 3 Long Range AWD. Idle fees assume you unplug when you say you will.</p>
 </main>
 
 <div class="actionbar">
@@ -285,13 +288,16 @@
       </div>
       <div class="row two">
         <label>Parking RM <input type="number" class="slot-parking" step="0.5" min="0" inputmode="decimal" placeholder="0 = free"></label>
-        <label>Charged <span class="select"><select class="slot-parking-unit"><option value="flat">Flat per visit</option><option value="hour">Per hour (first hour)</option></select></span></label>
+        <label>Charged <span class="select"><select class="slot-parking-unit"><option value="flat">Flat per visit</option><option value="hour">Per hour</option></select></span></label>
       </div>
       <label class="check"><input type="checkbox" class="slot-gentari"><span>Gentari credit deal</span></label>
       <details class="more">
         <summary>More parking and idle-fee options</summary>
-        <div class="row three">
-          <label>Later hours, RM/h <input type="number" data-k="parkingNext" step="0.5" min="0" inputmode="decimal" placeholder="same"></label>
+        <div class="row two">
+          <label>First rate covers, hours <input type="number" data-k="parkingFirstHours" step="1" min="1" inputmode="numeric" placeholder="1"></label>
+          <label>Then per hour, RM <input type="number" data-k="parkingNext" step="0.5" min="0" inputmode="decimal" placeholder="same"></label>
+        </div>
+        <div class="row two">
           <label>Free minutes <input type="number" data-k="parkingGrace" step="1" min="0" inputmode="numeric" placeholder="0"></label>
           <label>Daily cap, RM <input type="number" data-k="parkingCap" step="1" min="0" inputmode="decimal" placeholder="none"></label>
         </div>
