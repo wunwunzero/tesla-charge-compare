@@ -167,6 +167,11 @@
           <label>Free minutes <input type="number" data-k="parkingGrace" step="1" min="0" inputmode="numeric" placeholder="0"></label>
           <label>Daily cap, RM <input type="number" data-k="parkingCap" step="1" min="0" inputmode="decimal" placeholder="none"></label>
         </div>
+        <div class="row two free-row">
+          <label>Free if you arrive from <input type="time" data-k="freeFrom"></label>
+          <label>Until <input type="time" data-k="freeTo"></label>
+        </div>
+        <label>Free window applies on <span class="select"><select data-k="freeDays"><option value="weekday">Weekdays, not public holidays</option><option value="all">Every day</option></select></span></label>
         <div class="wk-wrap">
           <label class="check"><input type="checkbox" data-k="wkDiff"><span>Different rate at weekends and public holidays</span></label>
           <div class="row three wk-fields hidden">
@@ -204,7 +209,7 @@
     </details>
   </section>
 
-  <p class="foot"><span id="ver">v14 · 24 Sep 2026</span><br>Estimates. Consumption, charging curve and losses are approximations for a 2024 Model 3 Long Range AWD. Idle fees assume you unplug when you say you will.</p>
+  <p class="foot"><span id="ver">v15 · 24 Sep 2026</span><br>Estimates. Consumption, charging curve and losses are approximations for a 2024 Model 3 Long Range AWD. Idle fees assume you unplug when you say you will.</p>
 </main>
 
 <div class="actionbar">
@@ -301,6 +306,11 @@
           <label>Free minutes <input type="number" data-k="parkingGrace" step="1" min="0" inputmode="numeric" placeholder="0"></label>
           <label>Daily cap, RM <input type="number" data-k="parkingCap" step="1" min="0" inputmode="decimal" placeholder="none"></label>
         </div>
+        <div class="row two free-row">
+          <label>Free if you arrive from <input type="time" data-k="freeFrom"></label>
+          <label>Until <input type="time" data-k="freeTo"></label>
+        </div>
+        <label>Free window applies on <span class="select"><select data-k="freeDays"><option value="weekday">Weekdays, not public holidays</option><option value="all">Every day</option></select></span></label>
         <div class="wk-wrap">
           <label class="check"><input type="checkbox" data-k="wkDiff"><span>Different rate at weekends and public holidays</span></label>
           <div class="row three wk-fields hidden">

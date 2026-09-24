@@ -11,7 +11,7 @@ Live: https://wunwunzero.github.io/tesla-charge-compare/
 - Gets real driving distance and time to each charger from Google's Routes API, with live traffic.
 - Works out the **all-in cost** of each option and tells you where to go:
   - **Charging**: kWh billed to reach the target, including the energy you burn driving there and AC/DC charging losses, at the station's RM/kWh. Gentari-flagged stations pay RM5 per RM30 of credit, so the effective rate is one sixth.
-  - **Parking**: per station, flat or hourly, with an optional different rate for later hours, free minutes, a daily cap, and separate weekend/public-holiday rates. Parked time = charging time + the minutes you stay plugged in afterwards. Weekday or weekend is taken from the phone's clock, or set it in the Trip card.
+  - **Parking**: per station, flat or hourly, with an optional different rate for later hours, free minutes, a daily cap, separate weekend/public-holiday rates, and a free-parking entry window (e.g. Pavilion Damansara Heights: free if you arrive 6pm to 11:59pm on weekdays), checked against your arrival time. Parked time = charging time + the minutes you stay plugged in afterwards. Weekday or weekend is taken from the phone's clock, or set it in the Trip card.
   - **Idle fee**: per station RM/min after a free period, applied to the minutes you say you'll stay plugged in after charging stops. Gentari defaults to RM0.40/min after 15 minutes.
   - **Tyres and wear**: a flat RM/km.
   - **Consumption follows speed**: each leg's Wh/km is blended between a city figure (40 km/h or slower) and a highway figure (90 km/h or faster) from Google's distance and time.

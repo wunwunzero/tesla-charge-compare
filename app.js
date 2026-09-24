@@ -73,8 +73,9 @@ let mapsLoading = null;
 let lastError = '';
 
 // Optional per-charger fields beyond the basics (parking tiers, weekend rates, idle fee)
-const EXTRA_KEYS = ['parkingFirstHours', 'parkingNext', 'parkingGrace', 'parkingCap', 'wkDiff', 'wkParking', 'wkUnit', 'wkNext', 'idleFee', 'idleGrace'];
-const pickExtras = (f) => Object.fromEntries(EXTRA_KEYS.map(k => [k, f[k] ?? (k === 'wkDiff' ? false : k === 'wkUnit' ? 'flat' : '')]));
+const EXTRA_KEYS = ['freeFrom', 'freeTo', 'freeDays', 'parkingFirstHours', 'parkingNext', 'parkingGrace', 'parkingCap', 'wkDiff', 'wkParking', 'wkUnit', 'wkNext', 'idleFee', 'idleGrace'];
+const EXTRA_DEFAULT = { wkDiff: false, wkUnit: 'flat', freeDays: 'weekday' };
+const pickExtras = (f) => Object.fromEntries(EXTRA_KEYS.map(k => [k, f[k] ?? EXTRA_DEFAULT[k] ?? '']));
 function emptySlot() {
   return { favId: '', name: '', address: '', lat: null, lng: null, rate: '', type: 'DC', kw: '', gentari: false, parking: '', parkingUnit: 'flat', manualKm: '', manualMin: '', manualToKm: '' };
 }
@@ -130,8 +131,20 @@ function isWeekendNow() {
   if (state.dayType === 'weekend') return true;
   const d = new Date().getDay(); return d === 0 || d === 6;
 }
-/** Parking for `minutes` parked: grace, first hour, later hours, daily cap, optional weekend rates. */
-function parkingFor(st, minutes) {
+const hhmm = (v) => { const m = /^(\d{1,2}):(\d{2})/.exec(v || ''); return m ? Number(m[1]) * 60 + Number(m[2]) : null; };
+const clock = (d) => d.toLocaleTimeString('en-MY', { hour: 'numeric', minute: '2-digit' }).toLowerCase();
+/** Is `arrive` inside the charger's free-parking entry window (e.g. weekdays 18:00–23:59)? */
+function inFreeWindow(st, arrive) {
+  const a = hhmm(st.freeFrom), b = hhmm(st.freeTo ?? '') ?? 24 * 60 - 1;
+  if (a == null) return false;
+  if ((st.freeDays || 'weekday') === 'weekday' && isWeekendNow()) return false;
+  const t = arrive.getHours() * 60 + arrive.getMinutes();
+  return a <= b ? t >= a && t <= b : t >= a || t <= b; // window may wrap past midnight
+}
+/** Parking for `minutes` parked: grace, first hour, later hours, daily cap, weekend rates, free entry window. */
+function parkingFor(st, minutes, arrive = new Date()) {
+  if (inFreeWindow(st, arrive)) return { cost: 0, hours: 0, block: 1, weekend: isWeekendNow(), first: 0, next: 0, unit: 'flat', grace: 0, capped: false, free: true,
+    window: true, arriveAt: clock(arrive), from: st.freeFrom };
   const wk = !!st.wkDiff && isWeekendNow();
   const first = Number(wk ? st.wkParking : st.parking) || 0;
   const unit = (wk ? st.wkUnit : st.parkingUnit) || 'flat';
@@ -146,7 +159,7 @@ function parkingFor(st, minutes) {
   }
   const capped = cap > 0 && cost > cap;
   if (capped) cost = cap;
-  return { cost, hours, block, weekend: wk, first, next, unit, grace, capped, free: first === 0 && next === 0 };
+  return { cost, hours, block, weekend: wk, first, next, unit, grace, capped, free: first === 0 && next === 0, window: false, arriveAt: clock(arrive), from: st.freeFrom };
 }
 /** Idle fee for staying plugged in after charging stops. Blank fields fall back to Gentari's RM0.40/min after 15 min. */
 function idleFor(st) {
@@ -197,7 +210,7 @@ function evaluate(st, legs, plan = { mode: 'target' }) {
   const detourEnergyCost = detourKwhBilled * effRate;
   const chargeMin = chargeMinutes(Math.max(socArrive, 0), socEnd, st.type, Number(st.kw) || 1);
   const idle = idleFor(st);
-  const park = parkingFor(st, chargeMin + idle.late);
+  const park = parkingFor(st, chargeMin + idle.late, new Date(Date.now() + (legs.toMin || 0) * 60000));
   const parkingCost = park.cost, parkingRate = park.first, idleCost = idle.cost;
   const wearCost = km * settings.wearPerKm;
   const totalMin = driveMin + chargeMin;
@@ -453,7 +466,7 @@ function renderSlots() {
     $('.slot-tokm', node).value = slot.manualToKm ?? '';
     $$('[data-k]', node).forEach(i => {
       const k = i.dataset.k, v = slot[k];
-      if (i.type === 'checkbox') i.checked = !!v; else i.value = v ?? (k === 'wkUnit' ? 'flat' : '');
+      if (i.type === 'checkbox') i.checked = !!v; else i.value = v ?? EXTRA_DEFAULT[k] ?? '';
       const onChange = () => { slot[k] = i.type === 'checkbox' ? i.checked : i.value; persist(); renderSlotSummary(node, slot); syncWk(node); };
       i.addEventListener('input', onChange); i.addEventListener('change', onChange);
     });
@@ -497,6 +510,7 @@ function parkingText(st) {
   const firstLbl = blk > 1 ? `first ${blk} h` : 'first hour';
   let t = st.parkingUnit === 'hour' ? ((next != null && next !== p) || blk > 1 ? `RM ${num(p, 2)} ${firstLbl}, then RM ${num(next ?? p, 2)}/h` : `RM ${num(p, 2)}/h`) : `RM ${num(p, 2)} flat`;
   if (st.wkDiff) t += `; weekends RM ${num(st.wkParking || 0, 2)}${st.wkUnit === 'hour' ? '/h' : ' flat'}`;
+  if (hhmm(st.freeFrom) != null) t += `; free if arriving ${st.freeFrom}–${st.freeTo || '23:59'}${(st.freeDays || 'weekday') === 'weekday' ? ' on weekdays' : ''}`;
   return 'parking ' + t;
 }
 function renderSlotSummary(node, slot) {
@@ -534,7 +548,7 @@ function editFav(f) {
   $('#favLat').value = f.lat ?? ''; $('#favLng').value = f.lng ?? '';
   $('#favRate').value = f.rate; $('#favType').value = f.type; $('#favKw').value = f.kw; $('#favGentari').checked = !!f.gentari;
   $('#favParking').value = f.parking ?? ''; $('#favParkingUnit').value = f.parkingUnit || 'flat';
-  $$('#favForm [data-k]').forEach(i => { const v = f[i.dataset.k]; if (i.type === 'checkbox') i.checked = !!v; else i.value = v ?? (i.dataset.k === 'wkUnit' ? 'flat' : ''); });
+  $$('#favForm [data-k]').forEach(i => { const v = f[i.dataset.k]; if (i.type === 'checkbox') i.checked = !!v; else i.value = v ?? EXTRA_DEFAULT[i.dataset.k] ?? ''; });
   syncWk($('#favForm'));
   $('#favCancel').classList.remove('hidden');
   $('#favForm').scrollIntoView({ behavior: 'smooth', block: 'center' });
@@ -728,7 +742,9 @@ function renderResults(rows, plan = { mode: 'target' }) {
     L.push(['Charging', rm(e.chargeCost), e.creditSession
       ? (e.topUpKwh > 0.05 ? `RM ${num(settings.gentariCredit, 0)} credit covers ${num(e.creditKwh, 1)} kWh here, plus ${num(e.topUpKwh, 1)} kWh at RM ${num(e.rate, 2)}` : `${num(e.billedKwh, 1)} kWh on one RM ${num(settings.gentariCredit, 0)} credit`)
       : `${num(e.billedKwh, 1)} kWh at RM ${num(e.rate, 2)}`]);
-    L.push(['Parking', p.free ? 'Free' : rm(e.parkingCost), p.free ? '' : `${p.weekend ? 'weekend rate, ' : ''}${p.unit === 'hour' ? `${p.hours} h` : 'flat'}${p.capped ? ', capped' : ''}${p.grace ? `, first ${p.grace} min free` : ''}`]);
+    const fromTxt = p.from ? clock(new Date(`2000-01-01T${p.from}`)) : '';
+    L.push(['Parking', p.free ? 'Free' : rm(e.parkingCost), p.window ? `arriving about ${p.arriveAt}, free from ${fromTxt}`
+      : p.free ? '' : `${p.weekend ? 'weekend rate, ' : ''}${p.unit === 'hour' ? `${p.hours} h` : 'flat'}${p.capped ? ', capped' : ''}${p.grace ? `, first ${p.grace} min free` : ''}${p.from ? `; arriving about ${p.arriveAt}, before the free window` : ''}`]);
     if (e.idle.rate > 0) L.push(['Idle fee', rm(e.idleCost), e.idle.late ? `${e.idle.late} min plugged in after charging, ${e.idle.grace} free` : `none if you unplug within ${e.idle.grace} min`]);
     L.push(['Wear', rm(e.wearCost), `${num(e.km, 1)} km`]);
     return L.map(([k, v, d]) => `<div class="o-line"><span>${k}</span><b>${v}</b>${d ? `<small>${esc(d)}</small>` : ''}</div>`).join('') +
