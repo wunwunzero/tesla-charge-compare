@@ -64,6 +64,12 @@
         <input type="range" id="socTargetRange" min="0" max="100" step="1" aria-label="Charge to">
       </label>
     </div>
+    <div id="gBalWrap" class="gbal hidden">
+      <label>Gentari credit balance, RM
+        <input type="number" id="gBal" step="0.01" min="0" inputmode="decimal" placeholder="Blank = fresh RM30 top-up">
+      </label>
+      <div class="hint" id="gBalHint"></div>
+    </div>
     <div class="hint" id="batteryHint"></div>
   </section>
 
@@ -209,7 +215,7 @@
     </details>
   </section>
 
-  <p class="foot"><span id="ver">v16 · 28 Sep 2026</span><br>Estimates. Consumption, charging curve and losses are approximations for a 2024 Model 3 Long Range AWD. Idle fees assume you unplug when you say you will.</p>
+  <p class="foot"><span id="ver">v17 · 28 Sep 2026</span><br>Estimates. Consumption, charging curve and losses are approximations for a 2024 Model 3 Long Range AWD. Idle fees assume you unplug when you say you will.</p>
 </main>
 
 <div class="actionbar">
@@ -267,7 +273,7 @@
       <label>You pay, RM <input type="number" id="setGentariPay" step="0.5" min="0"></label>
       <label>You get credit, RM <input type="number" id="setGentariCredit" step="0.5" min="0.5"></label>
     </div>
-    <p class="hint">One top-up per session: you pay the first amount and get the second as charging credit, then stop. When a Gentari charger is in the comparison, all chargers are compared on adding that same energy.</p>
+    <p class="hint">Credit is valued at what it cost you: the first amount per the second. Enter your current wallet balance in the Battery card; leave it blank to assume one fresh top-up.</p>
 
     <div class="row dlg-actions">
       <button type="submit" class="btn primary">Save</button>

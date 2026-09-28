@@ -62,6 +62,7 @@ let state = load(LS.state, {
   tripMode: 'oneway',               // oneway | round | detour
   lateMin: 0,                       // minutes you stay plugged in after charging stops
   dayType: 'auto',                  // auto | weekday | weekend (parking rates)
+  gentariBalance: '',               // RM already in the Gentari wallet; blank = one fresh top-up
   slots: [ emptySlot(), emptySlot() ],
 });
 if (!['oneway', 'round', 'detour'].includes(state.tripMode)) state.tripMode = 'oneway';
@@ -173,14 +174,31 @@ function idleFor(st) {
 /** Full cost model for one station. */
 /** If any charger in the comparison is Gentari, the session is one RM30 credit: RM30 worth of kWh at the first Gentari's rate.
  *  Every charger is then compared on putting that same energy into the pack. Otherwise charge to the target %. */
+/** Gentari credit available this session, valued at what it cost (RM5 per RM30 by default).
+ *  Blank balance: one fresh top-up. Balance below one top-up: assume you add one first. */
+function creditPool() {
+  const pay = Number(settings.gentariPay) || 5, credit = Number(settings.gentariCredit) || 30;
+  const raw = state.gentariBalance;
+  const bal = raw === '' || raw == null ? null : Math.max(0, Number(raw) || 0);
+  const perRm = pay / credit;
+  if (bal == null) return { avail: credit, balance: null, topUp: true, perRm, pay, credit };
+  if (bal < credit) return { avail: bal + credit, balance: bal, topUp: true, perRm, pay, credit };
+  return { avail: bal, balance: bal, topUp: false, perRm, pay, credit };
+}
+function creditText(pool) {
+  return pool.balance == null ? `one RM ${num(pool.pay, 0)} → RM ${num(pool.credit, 0)} top-up`
+    : pool.topUp ? `your RM ${num(pool.balance, 2)} balance plus one RM ${num(pool.pay, 0)} → RM ${num(pool.credit, 0)} top-up (RM ${num(pool.avail, 2)})`
+    : `your RM ${num(pool.balance, 2)} balance`;
+}
 function sessionPlan(slots) {
-  // With Gentari in the comparison, each Gentari site gives what one RM30 credit buys at ITS rate, always for RM5.
+  // Each Gentari site can use the available credit at ITS rate, stopping at the charge-to %.
   // Non-Gentari chargers add the same energy as the Gentari that gives the most (the cheapest-rate one).
   const gs = slots.filter(s => s.gentari && Number(s.rate) > 0);
   if (!gs.length) return { mode: 'target' };
-  const packOf = (g) => settings.gentariCredit / Number(g.rate) * (1 - (g.type === 'AC' ? settings.acLoss : settings.dcLoss) / 100);
+  const pool = creditPool();
+  const packOf = (g) => pool.avail / Number(g.rate) * (1 - (g.type === 'AC' ? settings.acLoss : settings.dcLoss) / 100);
   const g = gs.reduce((a, b) => packOf(a) >= packOf(b) ? a : b);
-  return { mode: 'credit', gentari: g, billedKwh: settings.gentariCredit / Number(g.rate), packKwh: packOf(g) };
+  return { mode: 'credit', gentari: g, pool, billedKwh: pool.avail / Number(g.rate), packKwh: packOf(g) };
 }
 
 function evaluate(st, legs, plan = { mode: 'target' }) {
@@ -192,16 +210,22 @@ function evaluate(st, legs, plan = { mode: 'target' }) {
   const roomKwh = Math.max(0, (100 - Math.max(socArrive, 0)) / 100 * settings.usableKwh);
   const rate = Number(st.rate) || 0;
   const creditSession = plan.mode === 'credit' && !!st.gentari && rate > 0;
-  const creditKwh = creditSession ? settings.gentariCredit / rate : 0;     // billed kWh one credit buys HERE
-  const packKwh = creditSession ? Math.min(creditKwh * (1 - loss), roomKwh)
-    : plan.mode === 'credit' ? Math.min(plan.packKwh, roomKwh)
-    : Math.max(0, (state.socTarget - socArrive) / 100 * settings.usableKwh);
+  const pool = plan.pool || creditPool();
+  const creditKwh = creditSession ? pool.avail / rate : 0;                  // billed kWh the available credit buys HERE
+  const toTarget = Math.max(0, (state.socTarget - Math.max(socArrive, 0)) / 100 * settings.usableKwh);
+  const cap = Math.min(roomKwh, toTarget);                                  // stop at the charge-to %
+  const packKwh = creditSession ? Math.min(creditKwh * (1 - loss), cap)
+    : plan.mode === 'credit' ? Math.min(plan.packKwh, cap)
+    : toTarget;
   const socEnd = Math.max(socArrive, 0) + packKwh / settings.usableKwh * 100;
   const billedKwh = packKwh / (1 - loss);
   const listedCost = billedKwh * rate;
   const topUpKwh = 0;
-  // Gentari: one RM5 top-up, however many kWh RM30 buys at this site's rate. Others: pay per kWh.
-  const chargeCost = creditSession ? settings.gentariPay : billedKwh * rate;
+  // Gentari: credit used, valued at what it cost you (RM5 per RM30). Others: pay per kWh.
+  const creditUsed = creditSession ? billedKwh * rate : 0;
+  const creditLeft = creditSession ? Math.max(0, pool.avail - creditUsed) : 0;
+  const stoppedAtTarget = creditSession && creditKwh * (1 - loss) > cap + 0.05;
+  const chargeCost = creditSession ? creditUsed * pool.perRm : billedKwh * rate;
   const effRate = billedKwh > 0 ? chargeCost / billedKwh : 0;
   const gFactor = creditSession ? settings.gentariPay / settings.gentariCredit : 1;
   const detourKwhBilled = driveKwh / (1 - loss);
@@ -218,7 +242,7 @@ function evaluate(st, legs, plan = { mode: 'target' }) {
   const doneAt = new Date(Date.now() + ((legs.toMin || 0) + chargeMin) * 60000);
   const socAfter = socEnd - legs.afterKm * whFor(legs.afterKm, legs.afterMin) / 1000 / settings.usableKwh * 100; // at destination / back home
   return { km, driveMin, driveKwh, socArrive, socEnd, socAfter, packKwh, billedKwh, rate, effRate, gFactor, listedCost, chargeCost, creditSession, creditKwh, topUpKwh,
-           detourEnergyCost, chargeMin, parkingCost, parkingRate, park, idle, idleCost, wearCost, totalMin, total, perKwh, rangeKm, doneAt, legs, whTo, loss };
+           detourEnergyCost, chargeMin, parkingCost, parkingRate, park, idle, idleCost, wearCost, totalMin, total, perKwh, rangeKm, doneAt, legs, whTo, loss, pool, creditUsed, creditLeft, stoppedAtTarget };
 }
 
 // ---------- Google Maps ----------
@@ -357,6 +381,11 @@ async function legsFor(stations, opts = {}) {
 }
 
 // ---------- UI: battery ----------
+function bindBalance() {
+  const i = $('#gBal'); if (!i) return;
+  i.value = state.gentariBalance ?? '';
+  i.addEventListener('input', () => { state.gentariBalance = i.value; persist(); renderBatteryHint(); });
+}
 function bindSoc() {
   const pairs = [['socNow', 'socNowRange'], ['socTarget', 'socTargetRange']];
   for (const [n, r] of pairs) {
@@ -368,12 +397,22 @@ function bindSoc() {
   }
   renderBatteryHint();
 }
+function renderBalance() {
+  const wrap = $('#gBalWrap'); if (!wrap) return;
+  const show = state.slots.some(s => s.gentari) || favs.some(f => f.gentari);
+  wrap.classList.toggle('hidden', !show);
+  const p = creditPool();
+  $('#gBalHint').textContent = p.balance == null ? `Blank = one fresh RM ${num(p.pay, 0)} → RM ${num(p.credit, 0)} top-up.`
+    : p.topUp ? `Below RM ${num(p.credit, 0)}, so the app assumes you top up RM ${num(p.pay, 0)} first: RM ${num(p.avail, 2)} to use.`
+    : `RM ${num(p.avail, 2)} to use, valued at RM ${num(p.avail * p.perRm, 2)} (what it cost you).`;
+}
 function renderBatteryHint() {
+  renderBalance();
   const rangeNow = state.socNow / 100 * settings.usableKwh / (whFor(60, 60) / 1000);
   const plan = sessionPlan(state.slots);
   if (plan.mode === 'credit') {
-    const endSoc = Math.min(100, state.socNow + plan.packKwh / settings.usableKwh * 100);
-    $('#batteryHint').textContent = `A Gentari charger is in the comparison, so each Gentari session is one RM ${num(settings.gentariCredit, 0)} credit. The best one gives about ${num(plan.billedKwh, 1)} kWh, taking you to roughly ${Math.round(endSoc)}%. The target % is ignored. Roughly ${Math.round(rangeNow)} km of range right now.`;
+    const endSoc = Math.min(state.socTarget, state.socNow + plan.packKwh / settings.usableKwh * 100);
+    $('#batteryHint').textContent = `Gentari sessions use ${creditText(plan.pool)}. At the cheapest Gentari site that takes you to roughly ${Math.round(endSoc)}%${endSoc >= state.socTarget ? `, where it stops at your charge-to %` : ''}. Roughly ${Math.round(rangeNow)} km of range right now.`;
     return;
   }
   const kwh = Math.max(0, (state.socTarget - state.socNow) / 100 * settings.usableKwh);
@@ -572,7 +611,7 @@ function bindFavs() {
     save(LS.favs, favs);
     // refresh any slot using this favourite
     for (const s of state.slots) if (s.favId === id) Object.assign(s, { name: f.name, address: f.address, lat: f.lat, lng: f.lng, rate: f.rate, type: f.type, kw: f.kw, gentari: f.gentari, parking: f.parking, parkingUnit: f.parkingUnit, ...pickExtras(f) });
-    persist(); resetFavForm(); renderFavs(); renderSlots();
+    persist(); resetFavForm(); renderFavs(); renderSlots(); renderBalance();
     showToast('Saved ' + f.name);
   });
   $('#favCancel').addEventListener('click', resetFavForm);
@@ -661,8 +700,7 @@ async function compare() {
   const out = $('#results');
   const problems = [];
   const plan = sessionPlan(state.slots);
-  if (plan.mode === 'target' && state.socTarget <= state.socNow) problems.push('Target charge must be above current charge.');
-  if (plan.mode === 'credit' && state.socNow >= 99) problems.push('Battery is already full.');
+  if (state.socTarget <= state.socNow) problems.push('Charge-to % must be above your current charge.');
   if (state.tripMode === 'detour' && !state.destination && !state.slots.every(s => s.manualKm !== '' && s.manualKm != null)) problems.push('Set a destination for the via-charger trip, or enter extra km manually.');
   state.slots.forEach((s, i) => {
     const label = s.name || `Charger ${i + 1}`;
@@ -731,7 +769,7 @@ function renderResults(rows, plan = { mode: 'target' }) {
       <div class="sub">${timing}</div>
       ${!ok.length ? `<div class="sub warn-t">Every option arrives below your ${minA}% minimum. This is the best value you can reach.</div>` : ''}
       <div class="v-act">${navBtn(best, 'primary')}${logBtn(best)}</div>
-      ${plan.mode === 'credit' ? `<div class="sub plan">Gentari: RM ${num(settings.gentariPay, 0)} buys RM ${num(settings.gentariCredit, 0)} of charging at each site, so a cheaper site gives more kWh. Other chargers are compared on adding ${num(plan.packKwh, 1)} kWh, the most any Gentari here gives.</div>` : ''}
+      ${plan.mode === 'credit' ? `<div class="sub plan">Gentari: using ${creditText(plan.pool)}, valued at RM ${num(plan.pool.pay, 0)} per RM ${num(plan.pool.credit, 0)}. A cheaper site gives more kWh for the same credit. Other chargers are compared on adding the same energy as the best Gentari, up to your ${state.socTarget}%.${best && best.ev.creditSession && best.ev.creditLeft >= 0.01 ? ` You'd have RM ${num(best.ev.creditLeft, 2)} left afterwards.` : ''}</div>` : ''}
     </div>`;
   } else {
     html += `<div class="verdict bad"><div class="eyebrow">Best value</div><div class="headline">None reachable</div><div class="sub">You would not make it to any of these on the current charge.</div></div>`;
@@ -742,7 +780,7 @@ function renderResults(rows, plan = { mode: 'target' }) {
   const lines = (e, r) => {
     const st = r.slot, p = e.park, L = [];
     L.push(['Charging', rm(e.chargeCost), e.creditSession
-      ? `RM ${num(settings.gentariPay, 0)} top-up = RM ${num(settings.gentariCredit, 0)} credit, buys ${num(e.creditKwh, 1)} kWh at RM ${num(e.rate, 2)}, ${num(e.packKwh, 1)} kWh into the battery`
+      ? `uses RM ${num(e.creditUsed, 2)} of ${creditText(e.pool)}, worth ${rm(e.chargeCost)} at RM ${num(e.pool.pay, 0)} per RM ${num(e.pool.credit, 0)}; ${num(e.billedKwh, 1)} kWh at RM ${num(e.rate, 2)}, ${num(e.packKwh, 1)} kWh into the battery${e.stoppedAtTarget ? `, stopping at your ${state.socTarget}%` : ''}${e.creditLeft >= 0.01 ? `; RM ${num(e.creditLeft, 2)} left in your wallet` : ''}`
       : `${num(e.billedKwh, 1)} kWh at RM ${num(e.rate, 2)}, ${num(e.packKwh, 1)} kWh into the battery`]);
     const fromTxt = p.from ? clock(new Date(`2000-01-01T${p.from}`)) : '';
     L.push(['Parking', p.free ? 'Free' : rm(e.parkingCost), p.window ? `arriving about ${p.arriveAt}, free from ${fromTxt}`
@@ -756,7 +794,7 @@ function renderResults(rows, plan = { mode: 'target' }) {
   html += `<div class="opts"><h2>All options, best value first</h2>${sorted.map(r => {
     if (!r.ev) return `<div class="opt dim"><div class="o-top"><span class="o-n">${esc(nameOf(r))}</span><span class="o-rm">—</span></div><div class="o-flag">${esc(r.error)}</div></div>`;
     const e = r.ev, dead = e.socArrive < 0, full = !isFinite(e.perKwh), tight = !dead && e.socArrive < minA;
-    const flag = dead ? `Can't reach it: you'd run out ${Math.round(-e.socArrive)}% short.` : full ? 'Battery would already be full.' : tight ? `Arrives at ${Math.round(e.socArrive)}%, below your ${minA}% minimum.` : '';
+    const flag = dead ? `Can't reach it: you'd run out ${Math.round(-e.socArrive)}% short.` : full ? `You'd already be at or above your ${state.socTarget}% charge-to.` : tight ? `Arrives at ${Math.round(e.socArrive)}%, below your ${minA}% minimum.` : '';
     return `<div class="opt ${r === best ? 'best' : ''} ${dead || tight || full ? 'dim' : ''}">
       <div class="o-top"><span class="o-n">${esc(nameOf(r))}${r.slot.gentari ? ' <span class="tag">Gentari</span>' : ''}</span><span class="o-rm">${dead || full ? '—' : perK(e.perKwh)}<small>/kWh</small></span></div>
       <div class="o-sub"><span>${dead ? '' : got(e)}</span><span>${Math.round(e.socArrive)}% → ${Math.round(e.socEnd)}%${afterWord ? ` · ${Math.round(e.socAfter)}% ${afterWord}` : ''}</span></div>
@@ -872,7 +910,7 @@ function renderNearby(rows, plan, notes, radius) {
   rows = [...rows].filter(r => isFinite(r.ev.perKwh)).sort((a, b) => (a.ev.socArrive < minA) - (b.ev.socArrive < minA) || a.ev.perKwh - b.ev.perKwh);
   if (!rows.length) { out.innerHTML = '<div class="hint" style="margin-top:10px">No reachable charger found.</div>'; return; }
   out.innerHTML = `
-    <div class="hint" style="margin-top:10px">Best value first, by all-in RM per kWh into your battery. ${plan.mode === 'credit' ? `Gentari sites: one RM ${num(settings.gentariPay, 0)} top-up each. Others: adding ${num(plan.packKwh, 1)} kWh.` : `Charging to ${state.socTarget}% at each.`}</div>
+    <div class="hint" style="margin-top:10px">Best value first, by all-in RM per kWh into your battery. ${plan.mode === 'credit' ? `Gentari sites: ${creditText(plan.pool)}. Others: same energy as the best Gentari. All stop at ${state.socTarget}%.` : `Charging to ${state.socTarget}% at each.`}</div>
     <div class="near-list">${rows.map((r, i) => {
       const c = r.cand, e = r.ev;
       const flags = [];
@@ -911,7 +949,7 @@ function logHistory(r, plan) {
   const e = r.ev, st = r.slot;
   history.unshift({ id: uid(), t: Date.now(), name: st.name || 'Charger', gentari: !!st.gentari, type: st.type, kw: Number(st.kw) || 0, rate: Number(st.rate) || 0,
     mode: state.tripMode, session: plan.mode, socNow: state.socNow, socArrive: Math.round(e.socArrive), socArriveExact: +e.socArrive.toFixed(1), socEnd: Math.round(e.socEnd), loss: Math.round(e.loss * 100),
-    predKwh: +e.billedKwh.toFixed(1), predCost: +e.chargeCost.toFixed(2), predParking: +e.parkingCost.toFixed(2), predTotal: +e.total.toFixed(2), predPerKwh: isFinite(e.perKwh) ? +e.perKwh.toFixed(3) : '',
+    predKwh: +e.billedKwh.toFixed(1), predCost: +e.chargeCost.toFixed(2), predParking: +e.parkingCost.toFixed(2), predTotal: +e.total.toFixed(2), creditUsed: e.creditSession ? +e.creditUsed.toFixed(2) : '', predPerKwh: isFinite(e.perKwh) ? +e.perKwh.toFixed(3) : '',
     predChargeMin: Math.round(e.chargeMin), predDriveMin: Math.round(e.driveMin), km: +e.km.toFixed(1), predIdle: +e.idleCost.toFixed(2), actKwh: '', actCost: '', actMin: '', actEnd: '' });
   history = history.slice(0, 200);
   save(LS.history, history); renderHistory(); showToast('Logged. Fill in the receipt under History when you are done.');
@@ -1012,6 +1050,7 @@ function showToast(msg) {
 // ---------- boot ----------
 function init() {
   bindSoc();
+  bindBalance();
   bindSettings();
   bindOrigin();
   bindTrip();
