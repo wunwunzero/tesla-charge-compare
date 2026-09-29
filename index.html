@@ -29,9 +29,13 @@
   <symbol id="i-bolt" viewBox="0 0 24 24"><path d="M13 2 4 14h7l-1 8 9-12h-7l1-8Z"/></symbol>
   <symbol id="i-chev" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></symbol>
   <symbol id="i-nav" viewBox="0 0 24 24"><path d="M3 11 21 3l-8 18-2-8-8-2Z"/></symbol>
+  <symbol id="i-check" viewBox="0 0 24 24"><path d="m5 12.5 4.5 4.5L19 7.5"/></symbol>
+  <symbol id="i-arrow" viewBox="0 0 24 24"><path d="M5 12h14M13 6l6 6-6 6"/></symbol>
+  <symbol id="i-pin" viewBox="0 0 24 24"><path d="M12 21s-7-6.2-7-11.5a7 7 0 0 1 14 0C19 14.8 12 21 12 21Z"/><circle cx="12" cy="9.5" r="2.5"/></symbol>
 </svg>
 
 <header class="topbar">
+  <div class="topbar-in">
   <div class="brand">
     <img class="logo" src="icon.svg" alt="" width="34" height="34">
     <div>
@@ -40,71 +44,74 @@
     </div>
   </div>
   <button id="btnSettings" class="icon-btn" aria-label="Settings" title="Settings"><svg><use href="#i-gear"/></svg></button>
+  </div>
 </header>
 
 <main>
   <div id="keyBanner" class="banner hidden">
-    <div><strong>No Google API key yet.</strong> Add one for place search and live driving times. Until then, enter km and minutes for each charger by hand.</div>
+    <p><strong>Search and live driving times are off.</strong> Add a Google key, or type each charger's distance.</p>
     <button id="bannerSettings" class="btn ghost small">Add key</button>
   </div>
 
-  <!-- BATTERY -->
-  <section class="card">
-    <h2>Battery</h2>
+  <!-- TRIP -->
+  <section class="card trip" aria-labelledby="tripTitle">
+    <h2 id="tripTitle">This trip</h2>
     <div class="soc-grid">
       <label class="soc">
-        <span class="lbl">Now</span>
+        <span class="lbl">Battery now</span>
         <span class="big"><input type="number" id="socNow" min="0" max="100" step="1" inputmode="numeric"><span class="unit">%</span></span>
-        <input type="range" id="socNowRange" min="0" max="100" step="1" aria-label="Battery now">
+        <input type="range" id="socNowRange" min="0" max="100" step="1" aria-label="Battery now, percent">
       </label>
-      <div class="soc-arrow" aria-hidden="true">→</div>
+      <svg class="soc-arrow" aria-hidden="true"><use href="#i-arrow"/></svg>
       <label class="soc">
         <span class="lbl">Charge to</span>
         <span class="big"><input type="number" id="socTarget" min="0" max="100" step="1" inputmode="numeric"><span class="unit">%</span></span>
-        <input type="range" id="socTargetRange" min="0" max="100" step="1" aria-label="Charge to">
+        <input type="range" id="socTargetRange" min="0" max="100" step="1" aria-label="Charge to, percent">
       </label>
     </div>
+    <div class="hint" id="batteryHint"></div>
     <div id="gBalWrap" class="gbal hidden">
       <label>Gentari credit balance, RM
-        <input type="number" id="gBal" step="0.01" min="0" inputmode="decimal" placeholder="Blank = fresh RM30 top-up">
+        <input type="number" id="gBal" step="0.01" min="0" inputmode="decimal" placeholder="Blank: one RM30 top-up">
       </label>
       <div class="hint" id="gBalHint"></div>
     </div>
-    <div class="hint" id="batteryHint"></div>
-  </section>
 
-  <!-- TRIP -->
-  <section class="card">
-    <h2>Trip</h2>
-    <div class="seg" id="tripMode" role="tablist">
-      <button type="button" data-mode="oneway" class="on">One way</button>
-      <button type="button" data-mode="round">Round trip</button>
-      <button type="button" data-mode="detour">Via charger</button>
+    <div class="seg" id="tripMode" role="radiogroup" aria-label="Trip type">
+      <button type="button" role="radio" data-mode="oneway" class="on">One way</button>
+      <button type="button" role="radio" data-mode="round">Round trip</button>
+      <button type="button" role="radio" data-mode="detour">Via charger</button>
     </div>
     <div class="hint" id="tripHint"></div>
-    <h3 class="sub-h">Starting from</h3>
-    <div class="stack">
+
+    <div class="origin">
       <button id="btnLocate" class="btn secondary wide"><svg><use href="#i-locate"/></svg><span>Use my location</span></button>
       <div id="originAuto" class="autocomplete-slot"></div>
+      <div class="hint" id="originHint">No starting point set.</div>
     </div>
-    <div class="hint" id="originHint">No starting point set.</div>
     <div id="destWrap" class="hidden">
       <h3 class="sub-h">Going to</h3>
       <div id="destAuto" class="autocomplete-slot"></div>
       <div class="hint" id="destHint">No destination set.</div>
     </div>
-    <div class="row two" style="margin-top:14px">
-      <label>Unplug after charging
-        <span class="select"><select id="lateMin">
-          <option value="0">Right away</option><option value="10">10 min later</option><option value="15">15 min later</option>
-          <option value="20">20 min later</option><option value="30">30 min later</option><option value="45">45 min later</option><option value="60">1 hour later</option>
-        </select></span>
-      </label>
-      <label>Parking rates for
-        <span class="select"><select id="dayType"><option value="auto">Today</option><option value="weekday">Weekday</option><option value="weekend">Weekend / public holiday</option></select></span>
-      </label>
-    </div>
+    <details class="more" id="tripMore">
+      <summary>Unplug time and parking day</summary>
+      <div class="row two">
+        <label>Unplug after charging
+          <span class="select"><select id="lateMin">
+            <option value="0">Right away</option><option value="10">10 min later</option><option value="15">15 min later</option>
+            <option value="20">20 min later</option><option value="30">30 min later</option><option value="45">45 min later</option><option value="60">1 hour later</option>
+          </select></span>
+        </label>
+        <label>Parking rates for
+          <span class="select"><select id="dayType"><option value="auto">Today</option><option value="weekday">Weekday</option><option value="weekend">Weekend or holiday</option></select></span>
+        </label>
+      </div>
+    </details>
   </section>
+
+  <!-- RESULTS -->
+  <section id="results" class="hidden" aria-live="polite"></section>
 
   <!-- STATIONS -->
   <section class="card">
@@ -122,12 +129,9 @@
       <span class="select"><select id="nearRadius" aria-label="Search radius"><option value="3">3 km</option><option value="5">5 km</option><option value="10">10 km</option><option value="20">20 km</option></select></span>
     </div>
     <button id="btnNear" class="btn secondary wide">Find the cheapest charger nearby</button>
-    <div class="hint">Ranks your saved chargers plus EV chargers Google knows about within the radius, from your starting point. Google results are priced from the operator table in Settings and assume no parking fee.</div>
+    <div class="hint">Your saved chargers plus chargers Google finds nearby. Google results use the estimated prices in Settings and assume free parking.</div>
     <div id="nearOut"></div>
   </section>
-
-  <!-- RESULTS -->
-  <section id="results" class="hidden"></section>
 
   <!-- FAVOURITES -->
   <section class="card">
@@ -141,14 +145,12 @@
         <h3 id="favFormTitle">Add a charger</h3>
         <input type="hidden" id="favId">
         <label>Name <input type="text" id="favName" required placeholder="e.g. Gentari Sunway Pyramid"></label>
-        <label>Location
-          <div id="favAuto" class="autocomplete-slot"></div>
-          <input type="text" id="favAddress" placeholder="Address or description" autocomplete="off">
-          <div class="row two">
-            <input type="number" id="favLat" step="any" placeholder="Latitude (optional)" inputmode="decimal">
-            <input type="number" id="favLng" step="any" placeholder="Longitude (optional)" inputmode="decimal">
-          </div>
-        </label>
+        <div id="favAuto" class="autocomplete-slot"></div>
+        <label>Address <input type="text" id="favAddress" placeholder="Mall or street" autocomplete="off"></label>
+        <div class="row two">
+          <label>Latitude <input type="number" id="favLat" step="any" placeholder="Optional" inputmode="decimal"></label>
+          <label>Longitude <input type="number" id="favLng" step="any" placeholder="Optional" inputmode="decimal"></label>
+        </div>
         <div class="row three">
           <label>RM / kWh <input type="number" id="favRate" step="0.01" min="0" required inputmode="decimal" placeholder="1.20"></label>
           <label>Type
@@ -159,10 +161,10 @@
         <div class="row two">
           <label>Parking fee, RM <input type="number" id="favParking" step="0.5" min="0" inputmode="decimal" placeholder="0 = free"></label>
           <label>Charged
-            <span class="select"><select id="favParkingUnit"><option value="flat">Flat per visit</option><option value="hour">Per hour</option></select></span>
+            <span class="select"><select id="favParkingUnit"><option value="flat">Flat</option><option value="hour">Per hour</option></select></span>
           </label>
         </div>
-        <label class="check"><input type="checkbox" id="favGentari"><span>Gentari credit deal applies here</span></label>
+        <label class="check"><input type="checkbox" id="favGentari"><span>Gentari charger (pay with credit)</span></label>
         <details class="more">
         <summary>More parking and idle-fee options</summary>
         <div class="row two">
@@ -187,9 +189,10 @@
           </div>
         </div>
         <div class="row two">
-          <label>Idle fee, RM/min <input type="number" data-k="idleFee" step="0.05" min="0" inputmode="decimal" placeholder="Gentari 0.40, else 0"></label>
-          <label>Idle free minutes <input type="number" data-k="idleGrace" step="1" min="0" inputmode="numeric" placeholder="Gentari 15, else 0"></label>
+          <label>Idle fee, RM/min <input type="number" data-k="idleFee" step="0.05" min="0" inputmode="decimal" placeholder="Auto"></label>
+          <label>Idle free minutes <input type="number" data-k="idleGrace" step="1" min="0" inputmode="numeric" placeholder="Auto"></label>
         </div>
+        <div class="hint">Auto: Gentari RM0.40 a minute after 15 free minutes; other operators none.</div>
       </details>
         <div class="row">
           <button type="submit" class="btn primary">Save charger</button>
@@ -209,13 +212,13 @@
       <div id="histSummary" class="hint"></div>
       <div id="histList" class="hist-list"></div>
       <div class="row" style="margin-top:10px">
-        <button type="button" id="histCopy" class="btn secondary small">Copy as CSV</button>
+        <button type="button" id="histCopy" class="btn secondary small">Copy as spreadsheet (CSV)</button>
         <button type="button" id="histClear" class="btn ghost small">Clear history</button>
       </div>
     </details>
   </section>
 
-  <p class="foot"><span id="ver">v17 · 28 Sep 2026</span><br>Estimates. Consumption, charging curve and losses are approximations for a 2024 Model 3 Long Range AWD. Idle fees assume you unplug when you say you will.</p>
+  <p class="foot"><span id="ver">v18 · 29 Sep 2026</span><br>Estimates. Consumption, charging curve and losses are approximations for a 2024 Model 3 Long Range AWD. Idle fees assume you unplug when you say you will.</p>
 </main>
 
 <div class="actionbar">
@@ -250,11 +253,11 @@
       <label>City use, Wh/km <input type="number" id="setWhPerKm" step="1" min="90" max="300"></label>
       <label>Highway use, Wh/km <input type="number" id="setWhHighway" step="1" min="90" max="300"></label>
     </div>
-    <p class="hint">Each leg is blended between the two by its average speed: 40 km/h or slower counts as city, 90 km/h or faster as highway. Chargers you'd reach below the minimum arrival % are never recommended.</p>
+    <p class="hint">Each drive blends the two by its average speed: 40 km/h or slower is city, 90 km/h or faster is highway. Chargers you'd reach below the minimum arrival are never recommended.</p>
     <div class="row three">
       <label>AC losses, % <input type="number" id="setAcLoss" step="1" min="0" max="30"></label>
       <label>DC losses, % <input type="number" id="setDcLoss" step="1" min="0" max="30"></label>
-      <label>Onboard AC, kW <input type="number" id="setOnboardAc" step="0.1" min="3" max="22"></label>
+      <label>AC limit, kW <input type="number" id="setOnboardAc" step="0.1" min="3" max="22"></label>
     </div>
 
     <h3>Your car and phone</h3>
@@ -262,7 +265,7 @@
       <label>Wear, RM / km <input type="number" id="setWearPerKm" step="0.01" min="0"></label>
       <label>Navigate with <span class="select"><select id="setNavApp"><option value="google">Google Maps</option><option value="waze">Waze</option><option value="apple">Apple Maps</option></select></span></label>
     </div>
-    <p class="hint">Chargers are ranked by all-in RM per kWh that goes into your battery. Charging time is shown with a finish time but doesn't affect the ranking.</p>
+    <p class="hint">Chargers are ranked by all-in RM per kWh into your battery. When two are within 3 sen per kWh, the quicker one wins.</p>
 
     <h3>Operator prices for nearby search</h3>
     <div id="opTable" class="op-table"></div>
@@ -273,7 +276,7 @@
       <label>You pay, RM <input type="number" id="setGentariPay" step="0.5" min="0"></label>
       <label>You get credit, RM <input type="number" id="setGentariCredit" step="0.5" min="0.5"></label>
     </div>
-    <p class="hint">Credit is valued at what it cost you: the first amount per the second. Enter your current wallet balance in the Battery card; leave it blank to assume one fresh top-up.</p>
+    <p class="hint">Credit counts at what it cost you: RM5 buys RM30, so RM30 of charging costs RM5. Enter your wallet balance on the main screen.</p>
 
     <div class="row dlg-actions">
       <button type="submit" class="btn primary">Save</button>
@@ -284,14 +287,21 @@
 
 <template id="slotTpl">
   <div class="slot">
+    <div class="slot-line">
+      <div class="sl-text"><div class="sl-name"></div><div class="sl-meta"></div></div>
+      <button type="button" class="btn ghost small slot-edit">Edit</button>
+      <button type="button" class="icon-btn slot-remove2" aria-label="Remove charger"><svg><use href="#i-x"/></svg></button>
+    </div>
+    <div class="slot-err" role="alert" hidden></div>
+    <div class="slot-body">
     <div class="slot-head">
-      <span class="select grow"><select class="slot-pick"></select></span>
-      <button type="button" class="icon-btn slot-remove" aria-label="Remove"><svg><use href="#i-x"/></svg></button>
+      <span class="select grow"><select class="slot-pick" aria-label="Charger"></select></span>
+      <button type="button" class="icon-btn slot-remove" aria-label="Remove charger"><svg><use href="#i-x"/></svg></button>
     </div>
     <div class="slot-custom">
-      <input type="text" class="slot-name" placeholder="Charger name">
+      <label>Name <input type="text" class="slot-name" placeholder="e.g. Gentari Petronas SS2"></label>
       <div class="autocomplete-slot slot-auto"></div>
-      <input type="text" class="slot-address" placeholder="Address (optional without API key)">
+      <label>Address <input type="text" class="slot-address" placeholder="Optional"></label>
       <div class="row three">
         <label>RM / kWh <input type="number" class="slot-rate" step="0.01" min="0" inputmode="decimal" placeholder="1.20"></label>
         <label>Type <span class="select"><select class="slot-type"><option value="DC">DC</option><option value="AC">AC</option></select></span></label>
@@ -299,9 +309,9 @@
       </div>
       <div class="row two">
         <label>Parking RM <input type="number" class="slot-parking" step="0.5" min="0" inputmode="decimal" placeholder="0 = free"></label>
-        <label>Charged <span class="select"><select class="slot-parking-unit"><option value="flat">Flat per visit</option><option value="hour">Per hour</option></select></span></label>
+        <label>Charged <span class="select"><select class="slot-parking-unit"><option value="flat">Flat</option><option value="hour">Per hour</option></select></span></label>
       </div>
-      <label class="check"><input type="checkbox" class="slot-gentari"><span>Gentari credit deal</span></label>
+      <label class="check"><input type="checkbox" class="slot-gentari"><span>Gentari charger (pay with credit)</span></label>
       <details class="more">
         <summary>More parking and idle-fee options</summary>
         <div class="row two">
@@ -326,12 +336,14 @@
           </div>
         </div>
         <div class="row two">
-          <label>Idle fee, RM/min <input type="number" data-k="idleFee" step="0.05" min="0" inputmode="decimal" placeholder="Gentari 0.40, else 0"></label>
-          <label>Idle free minutes <input type="number" data-k="idleGrace" step="1" min="0" inputmode="numeric" placeholder="Gentari 15, else 0"></label>
+          <label>Idle fee, RM/min <input type="number" data-k="idleFee" step="0.05" min="0" inputmode="decimal" placeholder="Auto"></label>
+          <label>Idle free minutes <input type="number" data-k="idleGrace" step="1" min="0" inputmode="numeric" placeholder="Auto"></label>
         </div>
+        <div class="hint">Auto: Gentari RM0.40 a minute after 15 free minutes; other operators none.</div>
       </details>
     </div>
     <div class="slot-summary"></div>
+    <button type="button" class="btn ghost small slot-editfav hidden">Edit this saved charger</button>
     <details class="manual">
       <summary>Manual distance</summary>
       <div class="row two">
@@ -339,10 +351,12 @@
         <label>Driving min <input type="number" class="slot-min" step="1" min="0" inputmode="numeric"></label>
       </div>
       <div class="row tokm-row hidden">
-        <label>Km from here to the charger <input type="number" class="slot-tokm" step="0.1" min="0" inputmode="decimal" placeholder="for arrival battery %"></label>
+        <label>Km from here to the charger <input type="number" class="slot-tokm" step="0.1" min="0" inputmode="decimal" placeholder="For arrival battery"></label>
       </div>
       <div class="hint">Used when set, otherwise Google routing fills this in.</div>
     </details>
+    <div class="slot-foot"><button type="button" class="btn secondary small slot-done">Done</button></div>
+    </div>
   </div>
 </template>
 
