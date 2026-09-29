@@ -49,7 +49,7 @@
 
 <main>
   <div id="keyBanner" class="banner hidden">
-    <p><strong>Search and live driving times are off.</strong> Add a Google key, or type each charger's distance.</p>
+    <p><strong>Place search and live driving times are off.</strong> They need a Google Maps key in Settings. You can still type each charger's distance.</p>
     <button id="bannerSettings" class="btn ghost small">Add key</button>
   </div>
 
@@ -218,7 +218,7 @@
     </details>
   </section>
 
-  <p class="foot"><span id="ver">v18 · 29 Sep 2026</span><br>Estimates. Consumption, charging curve and losses are approximations for a 2024 Model 3 Long Range AWD. Idle fees assume you unplug when you say you will.</p>
+  <p class="foot"><span id="ver">v19 · 29 Sep 2026</span><br>Estimates. Consumption, charging curve and losses are approximations for a 2024 Model 3 Long Range AWD. Idle fees assume you unplug when you say you will.</p>
 </main>
 
 <div class="actionbar">
@@ -253,7 +253,7 @@
       <label>City use, Wh/km <input type="number" id="setWhPerKm" step="1" min="90" max="300"></label>
       <label>Highway use, Wh/km <input type="number" id="setWhHighway" step="1" min="90" max="300"></label>
     </div>
-    <p class="hint">Each drive blends the two by its average speed: 40 km/h or slower is city, 90 km/h or faster is highway. Chargers you'd reach below the minimum arrival are never recommended.</p>
+    <p class="hint">Each drive blends the two by its average speed: 40 km/h or slower is city, 90 km/h or faster is highway. A charger you'd reach below the minimum is only suggested when nothing else is in reach.</p>
     <div class="row three">
       <label>AC losses, % <input type="number" id="setAcLoss" step="1" min="0" max="30"></label>
       <label>DC losses, % <input type="number" id="setDcLoss" step="1" min="0" max="30"></label>
@@ -287,11 +287,10 @@
 
 <template id="slotTpl">
   <div class="slot">
-    <div class="slot-line">
-      <div class="sl-text"><div class="sl-name"></div><div class="sl-meta"></div></div>
-      <button type="button" class="btn ghost small slot-edit">Edit</button>
-      <button type="button" class="icon-btn slot-remove2" aria-label="Remove charger"><svg><use href="#i-x"/></svg></button>
-    </div>
+    <button type="button" class="slot-line" aria-expanded="false">
+      <span class="sl-text"><span class="sl-name"></span><span class="sl-meta"></span></span>
+      <span class="sl-edit">Edit</span>
+    </button>
     <div class="slot-err" role="alert" hidden></div>
     <div class="slot-body">
     <div class="slot-head">
@@ -345,7 +344,7 @@
     <div class="slot-summary"></div>
     <button type="button" class="btn ghost small slot-editfav hidden">Edit this saved charger</button>
     <details class="manual">
-      <summary>Manual distance</summary>
+      <summary>Type the distance yourself</summary>
       <div class="row two">
         <label>Driving km <input type="number" class="slot-km" step="0.1" min="0" inputmode="decimal"></label>
         <label>Driving min <input type="number" class="slot-min" step="1" min="0" inputmode="numeric"></label>
@@ -353,7 +352,7 @@
       <div class="row tokm-row hidden">
         <label>Km from here to the charger <input type="number" class="slot-tokm" step="0.1" min="0" inputmode="decimal" placeholder="For arrival battery"></label>
       </div>
-      <div class="hint">Used when set, otherwise Google routing fills this in.</div>
+      <div class="hint">Used instead of Google routing when filled in.</div>
     </details>
     <div class="slot-foot"><button type="button" class="btn secondary small slot-done">Done</button></div>
     </div>

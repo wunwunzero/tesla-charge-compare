@@ -90,6 +90,8 @@ function inputsChanged() {
   if (!state.hasRun || typeof compare !== 'function') return;
   const out = document.getElementById('results');
   if (out && !out.classList.contains('hidden')) { out.classList.add('stale'); setStatus('Updating…'); }
+  const near = document.getElementById('nearOut');
+  if (near && near.querySelector('.near-list') && !near.querySelector('.near-stale')) near.insertAdjacentHTML('afterbegin', '<p class="hint near-stale">Your trip changed. Search again to refresh these.</p>');
   clearTimeout(recomputeTimer);
   recomputeTimer = setTimeout(() => compare({ auto: true }), 600);
 }
@@ -403,7 +405,13 @@ function bindBalance() {
   i.value = state.gentariBalance ?? '';
   i.addEventListener('input', () => { state.gentariBalance = i.value; persist(); renderBatteryHint(); });
 }
-function fitSoc(i) { i.style.width = (String(i.value || '0').length + 0.4) + 'ch'; }
+const fitCanvas = document.createElement('canvas').getContext('2d');
+function fitSoc(i) {
+  const cs = getComputedStyle(i);
+  fitCanvas.font = `${cs.fontWeight} ${cs.fontSize} ${cs.fontFamily}`;
+  fitCanvas.letterSpacing = cs.letterSpacing;
+  i.style.width = Math.ceil(fitCanvas.measureText(String(i.value || '0')).width + 4) + 'px';
+}
 function bindSoc() {
   const pairs = [['socNow', 'socNowRange'], ['socTarget', 'socTargetRange']];
   for (const [n, r] of pairs) {
@@ -414,6 +422,7 @@ function bindSoc() {
     ri.addEventListener('input', () => set(ri.value));
   }
   renderBatteryHint();
+  document.fonts?.ready.then(() => pairs.forEach(([n]) => fitSoc($('#' + n))));
 }
 function renderBalance() {
   const wrap = $('#gBalWrap'); if (!wrap) return;
@@ -450,7 +459,7 @@ const TRIP_HINTS = {
   detour: 'Counts only the extra driving compared with going straight to your destination.',
 };
 function renderTrip() {
-  $$('#tripMode button').forEach(b => { const on = b.dataset.mode === state.tripMode; b.classList.toggle('on', on); b.setAttribute('aria-checked', String(on)); });
+  $$('#tripMode button').forEach(b => { const on = b.dataset.mode === state.tripMode; b.classList.toggle('on', on); b.setAttribute('aria-checked', String(on)); b.tabIndex = on ? 0 : -1; });
   $('#tripHint').textContent = TRIP_HINTS[state.tripMode];
   $('#destWrap').classList.toggle('hidden', state.tripMode !== 'detour');
   const d = $('#destHint');
@@ -468,6 +477,14 @@ function bindTrip() {
   $('#dayType').addEventListener('change', e => { state.dayType = e.target.value; persist(); renderDayHint(); });
   renderDayHint();
   $$('#tripMode button').forEach(b => b.addEventListener('click', () => { state.tripMode = b.dataset.mode; persist(); renderTrip(); renderBatteryHint(); }));
+  $('#tripMode').addEventListener('keydown', (ev) => {
+    const btns = $$('#tripMode button'); const i = btns.findIndex(b => b.dataset.mode === state.tripMode);
+    const step = ev.key === 'ArrowRight' || ev.key === 'ArrowDown' ? 1 : ev.key === 'ArrowLeft' || ev.key === 'ArrowUp' ? -1 : 0;
+    if (!step) return;
+    ev.preventDefault();
+    const nb = btns[(i + step + btns.length) % btns.length];
+    nb.click(); nb.focus();
+  });
   renderTrip();
   mountAutocomplete($('#destAuto'), p => { state.destination = { lat: p.lat, lng: p.lng, label: p.name || p.address }; persist(); renderTrip(); }, 'Search your destination')
     .then(ok => { if (!ok) $('#destAuto').remove(); });
@@ -519,16 +536,16 @@ function renderSlots() {
     if (pick.value === '' && slot.favId) { slot.favId = ''; }
     const custom = $('.slot-custom', node);
     custom.classList.toggle('hidden', !!slot.favId);
-    $('.slot-name', node).value = slot.name;
-    $('.slot-address', node).value = slot.address;
-    $('.slot-rate', node).value = slot.rate;
-    $('.slot-type', node).value = slot.type;
-    $('.slot-kw', node).value = slot.kw;
+    $('.slot-name', node).value = slot.name ?? '';
+    $('.slot-address', node).value = slot.address ?? '';
+    $('.slot-rate', node).value = slot.rate ?? '';
+    $('.slot-type', node).value = slot.type || 'DC';
+    $('.slot-kw', node).value = slot.kw ?? '';
     $('.slot-gentari', node).checked = !!slot.gentari;
     $('.slot-parking', node).value = slot.parking ?? '';
     $('.slot-parking-unit', node).value = slot.parkingUnit || 'flat';
-    $('.slot-km', node).value = slot.manualKm;
-    $('.slot-min', node).value = slot.manualMin;
+    $('.slot-km', node).value = slot.manualKm ?? '';
+    $('.slot-min', node).value = slot.manualMin ?? '';
     $('.slot-tokm', node).value = slot.manualToKm ?? '';
     const clearErr = () => { if (slotErrors[idx]) { delete slotErrors[idx]; node.classList.remove('invalid'); $('.slot-err', node).hidden = true; } };
     $$('[data-k]', node).forEach(i => {
@@ -539,7 +556,9 @@ function renderSlots() {
     });
     syncWk(node);
     const canRemove = state.slots.length > 2;
-    for (const sel of ['.slot-remove', '.slot-remove2']) {
+    $('.slot-line', node).setAttribute('aria-expanded', String(open));
+    $('.slot-line', node).setAttribute('aria-label', `Edit ${slot.name || `charger ${idx + 1}`}`);
+    for (const sel of ['.slot-remove']) {
       const btn = $(sel, node);
       btn.setAttribute('aria-label', canRemove ? 'Remove this charger' : 'Clear this charger');
       btn.title = canRemove ? 'Remove' : 'Clear';
@@ -550,7 +569,7 @@ function renderSlots() {
         showToast(canRemove ? 'Charger removed.' : 'Charger cleared.', { label: 'Undo', run: () => { state.slots = before; slotOpen.clear(); persist(); renderSlots(); } });
       });
     }
-    $('.slot-edit', node).addEventListener('click', () => { slotOpen.add(idx); renderSlots(); $$('.slot')[idx]?.querySelector('.slot-pick')?.focus(); });
+    $('.slot-line', node).addEventListener('click', () => { slotOpen.add(idx); renderSlots(); $$('.slot')[idx]?.querySelector('.slot-pick')?.focus(); });
     const done = $('.slot-done', node);
     done.closest('.slot-foot').classList.toggle('hidden', !isFilled(slot));
     done.addEventListener('click', () => { slotOpen.delete(idx); renderSlots(); });
@@ -569,7 +588,8 @@ function renderSlots() {
       }
       slotOpen.add(idx); clearErr(); persist(); renderSlots();
     });
-    const bind = (sel, key, transform = v => v) => $(sel, node).addEventListener('input', e => { slot[key] = transform(e.target.type === 'checkbox' ? e.target.checked : e.target.value); slotOpen.add(idx); clearErr(); persist(); renderSlotSummary(node, slot); renderBatteryHint(); });
+    const syncFoot = () => $('.slot-foot', node).classList.toggle('hidden', !isFilled(slot));
+    const bind = (sel, key, transform = v => v) => $(sel, node).addEventListener('input', e => { slot[key] = transform(e.target.type === 'checkbox' ? e.target.checked : e.target.value); slotOpen.add(idx); clearErr(); syncFoot(); persist(); renderSlotSummary(node, slot); renderBatteryHint(); });
     bind('.slot-name', 'name'); bind('.slot-address', 'address'); bind('.slot-rate', 'rate'); bind('.slot-type', 'type'); bind('.slot-kw', 'kw'); bind('.slot-gentari', 'gentari');
     bind('.slot-km', 'manualKm'); bind('.slot-min', 'manualMin'); bind('.slot-tokm', 'manualToKm'); bind('.slot-parking', 'parking'); bind('.slot-parking-unit', 'parkingUnit');
     $('.slot-address', node).addEventListener('input', () => { slot.lat = null; slot.lng = null; });
@@ -579,7 +599,7 @@ function renderSlots() {
     if (!slot.favId && open) {
       mountAutocomplete($('.slot-auto', node), p => {
         Object.assign(slot, { name: slot.name || p.name, address: p.address, lat: p.lat, lng: p.lng });
-        $('.slot-name', node).value = slot.name; $('.slot-address', node).value = slot.address;
+        $('.slot-name', node).value = slot.name ?? ''; $('.slot-address', node).value = slot.address ?? '';
         clearErr(); persist(); renderSlotSummary(node, slot);
       }, 'Search the charger location').then(ok => { if (!ok) $('.slot-auto', node).remove(); });
     }
@@ -587,6 +607,7 @@ function renderSlots() {
   const add = $('#btnAddSlot');
   add.disabled = state.slots.length >= 4;
   add.querySelector('span').textContent = state.slots.length >= 4 ? '4 max' : 'Add';
+  add.querySelector('svg').style.display = state.slots.length >= 4 ? 'none' : '';
   renderBatteryHint();
   if ($('#tripMode')) renderTrip();
 }
@@ -625,7 +646,10 @@ function renderFavs() {
       <div class="detail">RM ${num(f.rate, 2)}/kWh${parkingText(f) ? ' · ' + esc(parkingText(f)) : ''} · ${esc(f.address || (f.lat != null ? `${num(f.lat, 4)}, ${num(f.lng, 4)}` : 'no location'))}</div></div>
       <button class="icon-btn" data-act="edit" aria-label="Edit">${ICON('edit')}</button><button class="icon-btn" data-act="del" aria-label="Delete">${ICON('trash')}</button>`;
     $('[data-act=edit]', d).addEventListener('click', () => editFav(f));
-    $('[data-act=del]', d).addEventListener('click', () => { if (confirm(`Delete "${f.name}"?`)) { favs = favs.filter(x => x.id !== f.id); save(LS.favs, favs); renderFavs(); renderSlots(); } });
+    $('[data-act=del]', d).addEventListener('click', () => {
+      const before = favs.slice(); favs = favs.filter(x => x.id !== f.id); save(LS.favs, favs); renderFavs(); renderSlots();
+      showToast(`Deleted ${f.name}.`, { label: 'Undo', run: () => { favs = before; save(LS.favs, favs); renderFavs(); renderSlots(); } });
+    });
     list.appendChild(d);
   }
 }
@@ -681,7 +705,18 @@ function bindSettings() {
   const open = () => { fillSettings(); dlg.showModal(); };
   $('#btnSettings').addEventListener('click', open);
   $('#bannerSettings').addEventListener('click', open);
-  $('#settingsClose').addEventListener('click', () => dlg.close());
+  let dirty = false, draft = null;
+  $('#settingsForm').addEventListener('input', () => { dirty = true; });
+  const closeSettings = () => {
+    if (dirty) {
+      draft = $$('#settingsForm input, #settingsForm select').map(i => [i, i.value]);
+      showToast('Settings changes not saved.', { label: 'Reopen', run: () => { dlg.showModal(); draft.forEach(([i, v]) => { i.value = v; }); dirty = true; } });
+    }
+    dirty = false; dlg.close();
+  };
+  $('#settingsClose').addEventListener('click', closeSettings);
+  dlg.addEventListener('cancel', (ev) => { ev.preventDefault(); closeSettings(); });
+  $('#settingsForm').addEventListener('submit', () => { dirty = false; });
   $('#btnDiag').addEventListener('click', runDiagnostics);
   $('#btnPasteKey').addEventListener('click', async () => {
     try {
@@ -785,8 +820,8 @@ async function compare(opts = {}) {
       if (p.field === '.slot-km') { const m = el?.querySelector('.manual'); if (m) m.open = true; }
       const target = (p.field && el?.querySelector(p.field)) || el?.querySelector('input:not([type=hidden]):not([type=range])');
       if (target && target.offsetParent === null && p.slot != null && state.slots[p.slot].favId) { el.querySelector('.slot-pick')?.focus(); }
-      (target || el)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
       target?.focus({ preventScroll: true });
+      (target || el)?.scrollIntoView({ behavior: 'auto', block: 'center' });
     });
     scrollToResults();
     return;
@@ -819,22 +854,33 @@ function pickBest(pool) {
   const cheapest = pool.reduce((a, b) => a.ev.perKwh <= b.ev.perKwh ? a : b);
   return pool.filter(r => r.ev.perKwh - cheapest.ev.perKwh < TIE_RM).reduce((a, b) => a.ev.totalMin <= b.ev.totalMin ? a : b);
 }
+/** What leaves your pocket at the charger today: cash for charging (or the RM5 top-up), plus parking and idle fees. */
+function payToday(e) {
+  const topUp = e.creditSession && e.pool && e.pool.topUp ? e.pool.pay : 0;
+  const charge = e.creditSession ? topUp : e.chargeCost;
+  return { total: charge + e.parkingCost + e.idleCost, charge, topUp };
+}
+/** Was this charger logged in the last 3 hours? Keeps "Logged" through recomputes. */
+function recentlyLogged(name) { return history.some(h => h.name === (name || 'Charger') && Date.now() - h.t < 3 * 3600e3); }
 function outcomeText(e) {
   const short = state.socTarget - e.socEnd;
   return short > 0.5 ? `Reaches ${Math.round(e.socEnd)}%, ${Math.round(short)} short of your ${state.socTarget}%` : `Reaches your ${state.socTarget}%`;
 }
 function breakdownLines(e, st) {
-  const p = e.park, L = [];
+  const p = e.park, L = [], free = [];
   L.push(['Charging', rm(e.chargeCost), e.creditSession
     ? `RM ${num(e.creditUsed, 2)} of Gentari credit, which cost you ${rm(e.chargeCost)}. ${num(e.billedKwh, 1)} kWh at RM ${num(e.rate, 2)}, ${num(e.packKwh, 1)} kWh into the battery${e.stoppedAtTarget ? `, stopping at your ${state.socTarget}%` : ''}.${e.creditLeft >= 0.01 ? ` RM ${num(e.creditLeft, 2)} left in your wallet.` : ''}`
     : `${num(e.billedKwh, 1)} kWh at RM ${num(e.rate, 2)}, ${num(e.packKwh, 1)} kWh into the battery.`]);
   const fromTxt = p.from ? clock(new Date(`2000-01-01T${p.from}`)) : '';
-  L.push(['Parking', p.free ? 'Free' : rm(e.parkingCost), p.window ? `Arriving about ${p.arriveAt}, free from ${fromTxt}.`
-    : p.free ? 'No parking fee entered for this charger.' : `${p.weekend ? 'Weekend rate, ' : ''}${p.unit === 'hour' ? `${p.hours} h parked` : 'flat'}${p.capped ? ', capped' : ''}${p.grace ? `, first ${p.grace} min free` : ''}.`]);
-  if (e.idle.rate > 0) L.push(['Idle fee', rm(e.idleCost), e.idle.late ? `${e.idle.late} min plugged in after charging, ${e.idle.grace} free.` : `None if you unplug within ${e.idle.grace} min.`]);
+  if (e.parkingCost > 0) L.push(['Parking', rm(e.parkingCost), `${p.weekend ? 'Weekend rate, ' : ''}${p.unit === 'hour' ? `${p.hours} h parked` : 'flat'}${p.capped ? ', capped' : ''}${p.grace ? `, first ${p.grace} min free` : ''}.`]);
+  else free.push(p.window ? `parking (arriving about ${p.arriveAt}, free from ${fromTxt})` : p.free ? 'parking (no fee entered for this charger)' : 'parking (within the free minutes)');
+  if (e.idleCost > 0) L.push(['Idle fee', rm(e.idleCost), `${e.idle.late} min plugged in after charging, ${e.idle.grace} free.`]);
+  else if (e.idle.rate > 0) free.push(`idle fee (unplug within ${e.idle.grace} min)`);
   L.push(['Wear', rm(e.wearCost), `${num(e.km, 1)} km of driving.`]);
-  L.push(['All-in', rm(e.total), `${perK(e.perKwh)} per kWh into the battery.`]);
+  const pt = payToday(e);
+  L.push(['All-in', rm(e.total), `${perK(e.perKwh)} per kWh into the battery. You pay ${rm(pt.total)} at the charger today${e.creditSession ? (pt.topUp ? ', the RM ' + num(pt.topUp, 0) + ' top-up' + (pt.total > pt.topUp ? ' plus fees' : '') : ', the rest is credit') : ''}.`]);
   return L.map(([k, v, d]) => `<div class="o-line${k === 'All-in' ? ' sum' : ''}"><span>${k}</span><b>${v}</b>${d ? `<small>${esc(d)}</small>` : ''}</div>`).join('') +
+    (free.length ? `<div class="o-line"><span>No charge for</span><b>RM 0.00</b><small>${esc(free.join(', ').replace(/^./, c => c.toUpperCase()))}.</small></div>` : '') +
     `<div class="o-line"><span>Time</span><b>${dur(e.totalMin)}</b><small>${dur(e.driveMin)} ${state.tripMode === 'detour' ? 'extra ' : ''}driving + ${dur(e.chargeMin)} charging on ${esc(st.type)} ${esc(st.kw)} kW${st.type === 'AC' && Number(st.kw) > settings.onboardAc ? `. Your car takes ${settings.onboardAc} kW on AC` : ''}.</small></div>`;
 }
 /** One option card, shared by the comparison and nearby search. */
@@ -849,15 +895,19 @@ function optionCard(r, o) {
   else if (full) flags.unshift(`You'd already be above your ${state.socTarget}%.`);
   else if (tight) flags.unshift(`Arrives with ${Math.round(e.socArrive)}%, below your ${minA}% minimum.`);
   const cls = [o.best ? 'best' : '', dead || full ? 'dim' : '', tight ? 'tight' : ''].join(' ');
+  const pt = payToday(e);
+  const logged = o.logIdx != null && recentlyLogged(st.name);
   return `<article class="opt ${cls}">
     <div class="o-top"><h3 class="o-n">${esc(name)}</h3><div class="o-rm">${dead || full ? '—' : `${perK(e.perKwh)}<small>/kWh</small>`}</div></div>
     <div class="o-tags">${tags}</div>
     ${dead || full ? '' : `<p class="o-out">${outcomeText(e)}</p>
-    <p class="o-sub">${rm(e.total)} for ${num(e.packKwh, 1)} kWh · ${dur(e.totalMin)}, done around ${clock(e.doneAt)} · arrive with ${Math.round(e.socArrive)}%</p>
-    <div class="o-bar" aria-hidden="true"><i style="width:${Math.max(4, Math.min(100, e.perKwh / o.maxPer * 100)).toFixed(1)}%"></i></div>`}
+    <p class="o-sub">+${num(e.packKwh, 1)} kWh in ${dur(e.totalMin)}, done around ${clock(e.doneAt)}. ${pt.total < 0.005 ? 'Nothing to pay today.' : `Pay ${rm(pt.total)} today.`}</p>`}
     ${flags.map(f => `<p class="o-flag">${esc(f)}</p>`).join('')}
-    ${dead ? '' : `<details class="o-more"><summary>Cost breakdown</summary>${breakdownLines(e, st)}</details>
-    <div class="o-act"><a class="btn secondary small" href="${esc(navUrl(st))}" target="_blank" rel="noopener">${ICON('nav')}<span>Navigate</span></a>${o.logIdx != null ? `<button type="button" class="btn secondary small" data-log="${o.logIdx}">Log this charge</button>` : ''}</div>`}
+    ${dead ? '' : `<div class="o-foot">
+      <a class="btn secondary small o-nav" href="${esc(navUrl(st))}" target="_blank" rel="noopener">${ICON('nav')}<span>Navigate</span></a>
+      <details class="o-more"><summary>Cost breakdown</summary>${breakdownLines(e, st)}
+        ${o.logIdx != null ? `<button type="button" class="btn secondary small o-log" data-log="${o.logIdx}"${logged ? ' disabled' : ''}>${logged ? 'Logged' : 'Log this charge'}</button>` : ''}</details>
+    </div>`}
   </article>`;
 }
 
@@ -870,53 +920,57 @@ function renderResults(rows, plan = { mode: 'target' }) {
   const safeMode = !ok.length && reach.length > 0;       // nothing clears the minimum: rank by battery on arrival
   const best = safeMode ? reach.reduce((a, b) => a.ev.socArrive >= b.ev.socArrive ? a : b) : pickBest(ok);
   const cat = (r) => !r.ev ? 4 : r.ev.socArrive < 0 || !isFinite(r.ev.perKwh) ? 3 : r.ev.socArrive < minA ? 2 : 1;
-  const sorted = [...rows].sort((a, b) => (a === best ? -1 : b === best ? 1 : 0) || cat(a) - cat(b)
+  const others = rows.filter(r => r !== best).sort((a, b) => cat(a) - cat(b)
     || (safeMode ? (b.ev?.socArrive ?? 0) - (a.ev?.socArrive ?? 0) : (a.ev?.perKwh ?? 0) - (b.ev?.perKwh ?? 0)));
   const afterWord = state.tripMode === 'round' ? 'home' : state.tripMode === 'detour' ? 'at your destination' : '';
   let html = '';
 
   if (best) {
     const e = best.ev;
-    const others = (safeMode ? reach : ok).filter(r => r !== best);
-    const runner = others.length ? others.reduce((a, b) => a.ev.perKwh <= b.ev.perKwh ? a : b) : null;
+    const pool = (safeMode ? reach : ok).filter(r => r !== best);
+    const runner = pool.length ? pool.reduce((a, b) => a.ev.perKwh <= b.ev.perKwh ? a : b) : null;
     let why = '';
-    if (safeMode) why = `Every charger here leaves you below your ${minA}% minimum. This one leaves the most on arrival.`;
+    if (safeMode) why = `Every charger here leaves you below your ${minA}% minimum. This one gets you there with the most left, so charge soon.`;
     else if (!runner) why = 'The only charger you can reach comfortably.';
     else {
       const d = runner.ev.perKwh - e.perKwh, dt = runner.ev.totalMin - e.totalMin;
-      if (d < TIE_RM) why = dt >= 5 ? `Same price per kWh as ${esc(nameOf(runner))}, and ${dur(dt)} quicker.` : `Same price and time as ${esc(nameOf(runner))}. Pick whichever is handier.`;
+      if (d < TIE_RM) why = dt >= 5 ? `Within 3 sen per kWh of ${esc(nameOf(runner))} (${perK(e.perKwh)} vs ${perK(runner.ev.perKwh)}), so the quicker one wins: ${dur(dt)} faster.`
+        : `Within 3 sen per kWh of ${esc(nameOf(runner))} and about as quick. Pick whichever is handier.`;
       else {
         why = `${perK(d)} less per kWh than ${esc(nameOf(runner))}, about ${rm(d * e.packKwh)} less for this charge.`;
         if (-dt >= 20) why += ` It takes ${dur(-dt)} longer.`;
       }
     }
     const short = state.socTarget - e.socEnd;
+    const pt = payToday(e);
+    const vsRow = (r, isBest) => `<div class="vs-row${isBest ? ' me' : ''}"><span class="vs-n">${esc(nameOf(r))}</span><span class="vs-v">+${num(r.ev.packKwh, 1)} kWh to ${Math.round(r.ev.socEnd)}%</span><span class="vs-t">${dur(r.ev.totalMin)}</span></div>`;
+    const logged = recentlyLogged(best.slot.name);
     html += `<div class="answer ${safeMode ? 'warn' : ''}">
-      <h2 class="a-title"><span>${safeMode ? 'Closest safe bet:' : 'Go to'}</span> ${esc(nameOf(best))}</h2>
+      <h2 class="a-title"><span>${safeMode ? 'Most battery on arrival:' : 'Go to'}</span> ${esc(nameOf(best))}</h2>
       <div class="a-stats">
         <div class="stat ${safeMode ? 'amber' : ''}"><span class="v">${Math.round(safeMode ? e.socArrive : e.socEnd)}%</span><span class="k">${safeMode ? 'battery on arrival' : short > 0.5 ? `when done, ${Math.round(short)} short of your ${state.socTarget}%` : `when done, your target`}</span></div>
         <div class="stat ${safeMode ? '' : 'good'}"><span class="v">${perK(e.perKwh)}</span><span class="k">per kWh, all-in</span></div>
       </div>
       <p class="a-why">${why}</p>
-      <p class="a-meta">${rm(e.total)} for ${num(e.packKwh, 1)} kWh. Drive ${dur(e.legs.toMin)}, charge ${dur(e.chargeMin)}, done around ${clock(e.doneAt)}.${afterWord ? ` ${Math.round(e.socAfter)}% ${afterWord}.` : ''}</p>
-      ${e.creditSession ? `<p class="a-meta">Uses RM ${num(e.creditUsed, 2)} of Gentari credit, which cost you ${rm(e.chargeCost)}.${e.creditLeft >= 0.01 ? ` RM ${num(e.creditLeft, 2)} left.` : ''}</p>` : ''}
-      <div class="v-act"><a class="btn primary" href="${esc(navUrl(best.slot))}" target="_blank" rel="noopener">${ICON('nav')}<span>Navigate</span></a><button type="button" class="btn secondary" data-log="${state.slots.indexOf(best.slot)}">Log this charge</button></div>
+      ${runner ? `<div class="vs" aria-label="Compared with the runner-up">${vsRow(best, true)}${vsRow(runner, false)}</div>` : ''}
+      <p class="a-meta"><b>${pt.total < 0.005 ? 'Nothing to pay today' : `Pay ${rm(pt.total)} today`}</b>${e.creditSession ? (pt.topUp ? `: the RM ${num(pt.topUp, 0)} top-up${pt.total > pt.topUp ? ' plus fees' : ''}. Uses RM ${num(e.creditUsed, 2)} of credit` : `. Uses RM ${num(e.creditUsed, 2)} of your credit, which cost you ${rm(e.chargeCost)}`) : ''}. Drive ${dur(e.legs.toMin)}, charge ${dur(e.chargeMin)}, done around ${clock(e.doneAt)}.${afterWord ? ` ${Math.round(e.socAfter)}% ${afterWord}.` : ''}</p>
+      <details class="o-more a-more"><summary>Cost breakdown</summary>${breakdownLines(e, best.slot)}</details>
+      <div class="v-act"><a class="btn primary a-nav" href="${esc(navUrl(best.slot))}" target="_blank" rel="noopener">${ICON('nav')}<span>Navigate</span></a><button type="button" class="btn secondary" data-log="${state.slots.indexOf(best.slot)}"${logged ? ' disabled' : ''}>${logged ? 'Logged' : 'Log this charge'}</button></div>
     </div>`;
   } else {
     html += `<div class="answer bad"><h2 class="a-title">Nothing in reach</h2><p class="a-why">You would run out before reaching any of these chargers.</p></div>`;
   }
 
-  const maxPer = Math.max(...(ok.length ? ok : reach).map(r => r.ev.perKwh), 0.01);
   const srcs = [...new Set(rows.filter(r => r.src).map(r => r.src))].join(', ');
-  html += `<div class="opts"><h2>All options</h2>${sorted.map(r => optionCard(r, { name: nameOf(r), best: r === best, maxPer, logIdx: state.slots.indexOf(r.slot) })).join('')}
-    <p class="hint">Ranked by all-in RM per kWh into your battery: charging, parking${rows.some(r => r.ev && r.ev.idle.rate > 0) ? ', idle fee' : ''} and wear. Within 3 sen, the quicker charger ranks first.${plan.mode === 'credit' ? ` Non-Gentari chargers add the same energy as the Gentari that gives the most.` : ''} Distances: ${esc(srcs || 'n/a')}.</p>
+  if (others.length) html += `<div class="opts"><h2>Other options</h2>${others.map(r => optionCard(r, { name: nameOf(r), logIdx: state.slots.indexOf(r.slot) })).join('')}
+    <p class="hint">Ranked by all-in RM per kWh into your battery: charging, parking${rows.some(r => r.ev && r.ev.idle.rate > 0) ? ', idle fee' : ''} and wear. Within 3 sen, the quicker charger ranks first.${plan.mode === 'credit' ? ` Chargers you pay for in cash are priced on the same amount of charge as the best Gentari option, so the numbers line up.` : ''} Distances: ${esc(srcs || 'n/a')}.</p>
   </div>`;
 
   out.innerHTML = html;
   out.classList.remove('hidden', 'stale');
   $$('[data-log]', out).forEach(b => b.addEventListener('click', () => {
     const r = rows.find(x => state.slots.indexOf(x.slot) === Number(b.dataset.log));
-    if (r && r.ev) { logHistory(r, plan); $$(`[data-log="${b.dataset.log}"]`, out).forEach(x => { x.textContent = 'Logged'; x.disabled = true; }); }
+    if (r && r.ev && !recentlyLogged(r.slot.name)) { logHistory(r, plan); $$(`[data-log="${b.dataset.log}"]`, out).forEach(x => { x.textContent = 'Logged'; x.disabled = true; }); }
   }));
 }
 
@@ -1017,15 +1071,14 @@ function renderNearby(rows, plan, notes, radius) {
   const best = ok.length ? pickBest(ok.map(asRow)) : null;
   const bestCand = best ? best.slot : null;
   rows = [...rows].sort((a, b) => (a.cand === bestCand ? -1 : b.cand === bestCand ? 1 : 0) || (a.ev.socArrive < minA) - (b.ev.socArrive < minA) || a.ev.perKwh - b.ev.perKwh);
-  const maxPer = Math.max(...(ok.length ? ok : rows).map(r => r.ev.perKwh), 0.01);
   const anyEst = rows.some(r => !r.routed);
   out.innerHTML = `<div class="near-list">${rows.map(r => {
       const c = r.cand;
       const tags = [c.source === 'saved' ? 'Saved' : 'Price estimated'];
       const flags = c.source === 'google' && c.assumedPower ? ['Power unknown, 50 kW DC assumed.'] : [];
-      return optionCard({ slot: c, ev: r.ev }, { name: c.name, best: c === bestCand, maxPer, tags, flags });
+      return optionCard({ slot: c, ev: r.ev }, { name: c.name, best: c === bestCand, tags, flags });
     }).join('')}</div>
-    <div class="near-actions"><button class="btn primary" id="nearCompare">Compare the top ${Math.min(2, rows.length)} in detail</button></div>
+    <div class="near-actions"><button class="btn secondary" id="nearCompare">Add the top ${Math.min(2, rows.length)} to my comparison</button></div>
     <p class="hint">Within ${radius} km of ${esc(state.origin.label)}.${anyEst && settings.apiKey ? ' Some distances are straight-line estimates.' : ''}${notes.length ? ' ' + notes.map(esc).join(' ') : ''}</p>`;
   $('#nearCompare')?.addEventListener('click', () => {
     const before = JSON.parse(JSON.stringify(state.slots));
@@ -1039,9 +1092,12 @@ function renderNearby(rows, plan, notes, radius) {
       }
       return slot;
     });
-    while (picks.length < 2) picks.push(emptySlot());
-    state.slots = picks; slotOpen.clear(); save(LS.state, state); renderSlots(); compare();
-    showToast('Your chargers were replaced with the top 2 nearby.', { label: 'Undo', run: () => { state.slots = before; slotOpen.clear(); persist(); renderSlots(); compare({ auto: true }); } });
+    const same = (a, b) => (a.favId && a.favId === b.favId) || (a.name && a.name === b.name);
+    const keep = state.slots.filter(s => isFilled(s) && !picks.some(p => same(p, s)));
+    const next = [...picks, ...keep].slice(0, 4);
+    while (next.length < 2) next.push(emptySlot());
+    state.slots = next; slotOpen.clear(); save(LS.state, state); renderSlots(); compare();
+    showToast('Added the top 2 nearby.', { label: 'Undo', run: () => { state.slots = before; slotOpen.clear(); persist(); renderSlots(); compare({ auto: true }); } });
   });
 }
 
@@ -1053,7 +1109,7 @@ function logHistory(r, plan) {
     predKwh: +e.billedKwh.toFixed(1), predCost: +e.chargeCost.toFixed(2), predParking: +e.parkingCost.toFixed(2), predTotal: +e.total.toFixed(2), creditUsed: e.creditSession ? +e.creditUsed.toFixed(2) : '', predPerKwh: isFinite(e.perKwh) ? +e.perKwh.toFixed(3) : '',
     predChargeMin: Math.round(e.chargeMin), predDriveMin: Math.round(e.driveMin), km: +e.km.toFixed(1), predIdle: +e.idleCost.toFixed(2), actKwh: '', actCost: '', actMin: '', actEnd: '' });
   history = history.slice(0, 200);
-  save(LS.history, history); renderHistory(); showToast('Logged. Add the receipt in History after you charge.');
+  save(LS.history, history); renderHistory(); showToast('Logged. Add the receipt in History later.');
 }
 /** Loss % implied by receipts: billed kWh vs energy that landed in the pack (arrival % → ended-at %). */
 function calibration() {
@@ -1093,7 +1149,7 @@ function renderHistory() {
   } else sum.textContent = `${history.length} logged, none with a receipt yet.`;
   list.innerHTML = history.map(h => {
     const d = new Date(h.t);
-    const dt = d.toLocaleDateString('en-MY', { day: 'numeric', month: 'short' }) + ' ' + d.toLocaleTimeString('en-MY', { hour: '2-digit', minute: '2-digit' });
+    const dt = d.toLocaleDateString('en-MY', { day: 'numeric', month: 'short', year: 'numeric' }) + ', ' + clock(d);
     const hasAct = h.actKwh !== '' && Number(h.actKwh) > 0;
     const pr = predRM(h);
     const diff = hasAct ? `<div class="diff">Receipt: <b>${num(h.actKwh, 1)} kWh</b>${h.actCost !== '' ? `, <b>${rm(Number(h.actCost))}</b>${h.gentari ? ' credit' : ''}` : ''}${h.actMin !== '' ? `, <b>${h.actMin} min</b>` : ''}. Predicted ${num(h.predKwh, 1)} kWh${h.actCost !== '' && pr != null ? `, ${rm(pr)}` : ''}${h.actMin !== '' ? `, ${h.predChargeMin} min` : ''}.</div>` : '';
